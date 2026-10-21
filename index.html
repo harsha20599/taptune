@@ -104,7 +104,7 @@
 <body>
 <div id="start">
   <h1 style="flex:none">TapTune</h1>
-  <p>Plug the board in (on Android use a USB‑C OTG cable), then start. Use Chrome or Edge, because Safari can't read MIDI.</p>
+  <p>Start, then connect the board: <b>Connect Bluetooth</b> (top right, board on a wall charger), or plug its USB port in. Use Chrome or Edge, because Safari can't read MIDI or Bluetooth devices.</p>
   <button id="btnStart" class="primary">Start piano</button>
   <p id="startMsg"></p>
 </div>
@@ -113,6 +113,7 @@
   <header>
     <h1>TapTune</h1>
     <span class="pill"><span class="dot" id="midiDot"></span><span id="midiText">No MIDI device</span></span>
+    <button id="btnBle" title="Connect to the board wirelessly (Chrome/Edge on Android, Mac, Windows)">Connect Bluetooth</button>
   </header>
 
   <section class="panel" id="connBox" style="border-color:var(--warn)">
@@ -305,7 +306,8 @@ async function startMidi() {
   catch { access = await navigator.requestMIDIAccess({ sysex: false }); sysexOk = false; }
   const hook = () => {
     const inputs = [...access.inputs.values()], outputs = [...access.outputs.values()];
-    inputs.forEach(i => { i.onmidimessage = onMidi; });
+    inputs.forEach(i => { i.onmidimessage = e => { if (!bleLink) onMidi(e); }; });  // Bluetooth wins if both are on
+    if (bleLink) return;
     // The board may be listed as "Book Piano", or (Android) under its USB name.
     // Prefer the name; otherwise an output named like one of the inputs; otherwise the only/first one.
     const inNames = inputs.map(i => i.name);
@@ -321,6 +323,95 @@ async function startMidi() {
   hook();
 }
 
+// ---- Bluetooth (Web Bluetooth): the board's BLE-MIDI + settings services ----
+// Wireless means the phone isn't electrically tied to the books, so its screen
+// keeps working and touching it can't trigger notes. Notes use the standard
+// BLE-MIDI characteristic; settings/debug use the board's own service with the
+// same messages as USB SysEx (no F0/F7), split as [flags(1 first, 2 last), bytes…].
+const BLE = { midiSvc: "03b80e5a-ede8-4b33-a751-6ce34ec4c700", midiChr: "7772e5db-3868-4112-a1a9-f2669d106bf3",
+              cfgSvc: "b0c40001-7d42-4b50-9a1e-426f6f6b5069", cfgTx: "b0c40002-7d42-4b50-9a1e-426f6f6b5069",
+              cfgRx: "b0c40003-7d42-4b50-9a1e-426f6f6b5069" };
+let bleLink = null, bleMsg = [];
+if (!navigator.bluetooth) $("btnBle").style.display = "none";
+$("btnBle").onclick = () => bleLink ? bleDisconnect() : bleConnect();
+async function bleConnect() {
+  try {
+    const dev = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [BLE.midiSvc] }, { namePrefix: "Book Piano" }], optionalServices: [BLE.midiSvc, BLE.cfgSvc] });
+    dev.addEventListener("gattserverdisconnected", () => bleGone(dev));
+    await bleOpen(dev);
+  } catch (e) {
+    if (e.name !== "NotFoundError") { log("Bluetooth: " + e.message); setMidi(false, "Bluetooth failed: " + e.message); }
+  }
+}
+async function bleOpen(dev) {
+  setMidi(false, "Connecting Bluetooth…");
+  const gatt = await dev.gatt.connect();
+  const ms = await gatt.getPrimaryService(BLE.midiSvc), cs = await gatt.getPrimaryService(BLE.cfgSvc);
+  const midi = await ms.getCharacteristic(BLE.midiChr), tx = await cs.getCharacteristic(BLE.cfgTx), rx = await cs.getCharacteristic(BLE.cfgRx);
+  midi.addEventListener("characteristicvaluechanged", e => bleMidiIn(new Uint8Array(e.target.value.buffer)));
+  tx.addEventListener("characteristicvaluechanged", e => bleCfgIn(new Uint8Array(e.target.value.buffer)));
+  await midi.startNotifications();
+  await tx.startNotifications();
+  let chain = Promise.resolve();  // Bluetooth allows one operation at a time
+  const q = fn => { chain = chain.then(fn).catch(err => log("Bluetooth send: " + err.message)); };
+  bleLink = { dev };
+  midiOut = { name: "Bluetooth", send(a) {
+    const b = Array.from(a);
+    if (b[0] === 0xF0) {
+      const body = b.slice(1, -1);
+      for (let i = 0; i < Math.max(body.length, 1); i += 19) {
+        const flags = (i === 0 ? 1 : 0) | (i + 19 >= body.length ? 2 : 0);
+        const part = new Uint8Array([flags, ...body.slice(i, i + 19)]);
+        q(() => rx.writeValueWithResponse(part));
+      }
+    } else {
+      const ts = Math.floor(performance.now()) & 0x1FFF;
+      const pkt = new Uint8Array([0x80 | (ts >> 7), 0x80 | (ts & 0x7F), ...b]);
+      q(() => midi.writeValueWithoutResponse(pkt));
+    }
+  } };
+  sysexOk = true; boardAnswered = false; askTries = 0;
+  midiPorts = { ins: ["Bluetooth"], outs: ["Bluetooth"] };
+  setMidi(true, "Book Piano · Bluetooth");
+  $("btnBle").textContent = "Disconnect";
+  askBoard();
+}
+function bleMidiIn(b) {  // BLE-MIDI: header, then (timestamp, [status], data…)…
+  let st = 0;
+  for (let i = 1; i < b.length;) {
+    if (b[i] & 0x80) { i++; if (i < b.length && (b[i] & 0x80)) st = b[i++]; }
+    const n = (st & 0xE0) === 0xC0 ? 1 : 2;
+    if (!st || i + n > b.length) break;
+    onMidi({ data: new Uint8Array([st, ...b.slice(i, i + n)]) });
+    i += n;
+  }
+}
+function bleCfgIn(c) {
+  if (c[0] & 1) bleMsg = [];
+  bleMsg.push(...c.slice(1));
+  if (c[0] & 2) { onMidi({ data: new Uint8Array([0xF0, ...bleMsg, 0xF7]) }); bleMsg = []; }
+}
+async function bleGone(dev) {
+  if (!bleLink || bleLink.dev !== dev) return;  // we disconnected on purpose
+  bleLink = null; midiOut = null;
+  $("btnBle").textContent = "Connect Bluetooth";
+  setMidi(false, "Bluetooth lost, reconnecting…");
+  for (let i = 0; i < 6 && !bleLink; i++) {
+    try { await bleOpen(dev); return; } catch { await new Promise(r => setTimeout(r, 1500)); }
+  }
+  setMidi(false, "Bluetooth disconnected");
+  midiPorts = { ins: [], outs: [] }; renderConn();
+}
+function bleDisconnect() {
+  const d = bleLink && bleLink.dev;
+  bleLink = null; midiOut = null;
+  if (d && d.gatt.connected) d.gatt.disconnect();
+  $("btnBle").textContent = "Connect Bluetooth";
+  setMidi(false, "Bluetooth disconnected");
+  midiPorts = { ins: [], outs: [] }; renderConn();
+}
+
 // Ask the board for its setup until it answers; explain what's wrong if it doesn't.
 let midiPorts = { ins: [], outs: [] }, askTries = 0, askTimer = null, boardAnswered = false;
 function askBoard() {
@@ -333,7 +424,9 @@ function askBoard() {
   renderConn();
 }
 function connProblem() {
-  if (!midiPorts.ins.length) return "No MIDI device found. Plug the main board's USB port into this phone/computer.";
+  if (!midiPorts.ins.length) return navigator.bluetooth
+    ? "Not connected. Tap “Connect Bluetooth” at the top (board on a wall charger), or plug the main board's USB port into this device."
+    : "No MIDI device found. Plug the main board's USB port into this device. (Bluetooth needs Chrome or Edge.)";
   if (!sysexOk) return "Notes work, but this browser blocked MIDI settings access, so Setup and Debug can't talk to the board. " +
     "Fix: tap the icon left of the address bar → Permissions (or Site settings) → MIDI devices / “Control and reprogram MIDI devices” → Allow, then reload.";
   if (!midiPorts.outs.length) return "The board is sending notes, but no MIDI output to it was found, so settings can't be sent. Unplug and replug the board, then reload.";
