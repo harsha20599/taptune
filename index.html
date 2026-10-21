@@ -948,16 +948,22 @@ function dbgWrite(s, peak, ms) {
 // arrive unevenly late. Every BLE-MIDI note carries the board's millisecond
 // timestamp; "Steady" plays each note at (its true time + a fixed delay) so
 // the delay is constant instead of jumping around.
-let lastTs = null, wrapAdd = 0, infoAskedAt = 0;
+let infoAskedAt = 0, relBase = null;
 const relWin = [], lateHist = [], linkRtt = [];
 function steadyDelay(ts, arrived, isOn) {
-  if (lastTs != null && ts < lastTs - 4096) wrapAdd += 8192;  // 13-bit ms clock wrapped around
-  else if (lastTs != null && ts > lastTs + 4096) wrapAdd -= 8192;
-  lastTs = ts;
-  const rel = arrived - (ts + wrapAdd);  // transit time + clock offset
+  // The board's timestamp is milliseconds modulo 8192 (13 bits), so it wraps
+  // every 8.2 s — and between notes it may wrap any number of times. Pick the
+  // wrap that puts this note closest to where our clock says it should be.
+  let full = ts;
+  if (relBase != null) {
+    const expected = arrived - relBase;               // board time we'd expect right now
+    full = ts + 8192 * Math.round((expected - ts) / 8192);
+  }
+  const rel = arrived - full;  // transit time + clock offset
   relWin.push({ t: arrived, rel });
   while (relWin.length && arrived - relWin[0].t > 20000) relWin.shift();
-  const late = rel - Math.min(...relWin.map(r => r.rel));  // vs the fastest recent delivery
+  relBase = Math.min(...relWin.map(r => r.rel));
+  const late = rel - relBase;  // vs the fastest recent delivery
   if (isOn) { lateHist.push({ t: arrived, late }); if (lateHist.length > 60) lateHist.shift(); renderTiming(); }
   if ($("timing").value !== "steady") return 0;
   return Math.max(0, steadyBuffer() - late) / 1000;
