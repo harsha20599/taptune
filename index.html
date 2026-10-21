@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#141413">
+<title>TapTune</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --ink: #1c1b19; --muted: #6b6862; --line: #e3e0da;
+    --accent: #2f6fdb; --hit: #e0532f; --good: #2e8b57; --bad: #c0392b;
+    --white-key: #fbfaf7; --black-key: #23211e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #141413; --panel: #1d1c1a; --ink: #f1efe9; --muted: #a29f97; --line: #2f2d2a;
+      --accent: #6c9cf0; --hit: #ff7a52; --good: #5cc28a; --bad: #ef6b5d;
+      --white-key: #e9e6df; --black-key: #0c0c0b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #141413; --panel: #1d1c1a; --ink: #f1efe9; --muted: #a29f97; --line: #2f2d2a;
+    --accent: #6c9cf0; --hit: #ff7a52; --good: #5cc28a; --bad: #ef6b5d;
+    --white-key: #e9e6df; --black-key: #0c0c0b;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 18px 16px 40px; }
+  header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+  h1 { font-size: 20px; margin: 0; flex: 1; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted);
+    border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; background: var(--panel); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); }
+  .dot.on { background: var(--good); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+    padding: 8px 12px; border-radius: 8px; cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  #start { position: fixed; inset: 0; background: var(--bg); display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px; z-index: 10; padding: 16px; text-align: center; }
+  #start button { font-size: 18px; padding: 14px 28px; border-radius: 12px; }
+  #start p { color: var(--muted); max-width: 420px; margin: 0; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .stat .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .stat .value { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .stat .sub { font-size: 12px; color: var(--muted); }
+  .keyboard { position: relative; height: 170px; display: flex; user-select: none; touch-action: none; }
+  .white { flex: 1; background: var(--white-key); border: 1px solid var(--line); border-radius: 0 0 8px 8px;
+    margin: 0 1px; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 8px;
+    font-size: 12px; color: #6b6862; transition: background .06s; }
+  .black { position: absolute; top: 0; height: 60%; background: var(--black-key); border-radius: 0 0 6px 6px; z-index: 2;
+    transition: background .06s; }
+  .white.down, .black.down { background: var(--hit); color: #fff; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .row label { color: var(--muted); font-size: 13px; }
+  input[type=range] { flex: 1; min-width: 140px; }
+  .log { font-size: 13px; color: var(--muted); white-space: pre-line; max-height: 8.5em; overflow: auto;
+    font-variant-numeric: tabular-nums; margin-top: 8px; }
+  h2 { font-size: 15px; margin: 0 0 10px; }
+  .hint { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+  details summary { cursor: pointer; font-weight: 600; }
+  details ul { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+  .maprows { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 6px; }
+  .maprow { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--line);
+    border-radius: 8px; font-size: 13px; transition: background .15s, border-color .15s; }
+  .maprow .who { flex: 1; color: var(--muted); }
+  .maprow .who b { color: var(--ink); }
+  .maprow select { font: inherit; padding: 4px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+  .maprow.hit { background: var(--hit); border-color: var(--hit); color: #fff; }
+  .maprow.hit .who, .maprow.hit .who b { color: #fff; }
+  .maprow.dirty { border-color: var(--accent); }
+  footer { color: var(--muted); font-size: 12px; margin-top: 18px; }
+  footer a { color: inherit; }
+  .warn { color: var(--bad); }
+</style>
+</head>
+<body>
+<div id="start">
+  <h1 style="flex:none">TapTune</h1>
+  <p>Plug the board in (on Android use a USB‑C OTG cable), then start. Use Chrome or Edge, because Safari can't read MIDI.</p>
+  <button id="btnStart" class="primary">Start piano</button>
+  <p id="startMsg"></p>
+</div>
+
+<main>
+  <header>
+    <h1>TapTune</h1>
+    <span class="pill"><span class="dot" id="midiDot"></span><span id="midiText">No MIDI device</span></span>
+  </header>
+
+  <section class="panel stats">
+    <div class="stat"><div class="label">Audio output delay</div><div class="value" id="vOut">—</div><div class="sub" id="vOutSub"></div></div>
+    <div class="stat"><div class="label">MIDI → sound start</div><div class="value" id="vProc">—</div><div class="sub">time inside this page, last note</div></div>
+    <div class="stat"><div class="label">Notes played</div><div class="value" id="vCount">0</div><div class="sub" id="vLast">—</div></div>
+    <div class="stat"><div class="label">Samples</div><div class="value" id="vSamples">—</div><div class="sub">decoded in memory</div></div>
+  </section>
+
+  <section class="panel">
+    <div class="keyboard" id="kb"></div>
+    <p class="hint">24 books = C4 to B5: books 1–12 on the main board, 13–24 on the second board. You can also tap the keys here or use the computer keys A S D F G H J K (W E T Y U for the black keys).</p>
+  </section>
+
+  <section class="panel">
+    <h2>Books</h2>
+    <div class="row">
+      <button id="btnBase" title="Board re-measures every book's resting level. Hands off!">Re-baseline (hands off)</button>
+      <button id="btnLearn" title="10 s: tap every book a few times">Learn taps (10 s)</button>
+      <button id="btnForget">Forget learned</button>
+      <button id="btnUpdate" title="Both boards join Wi-Fi and wait 10 min for new firmware. No playing meanwhile.">Update mode</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <label for="vol">Volume</label><input type="range" id="vol" min="0" max="1.5" step="0.01" value="1">
+    </div>
+    <div class="row" style="margin-top:8px">
+      <label for="rel">Release</label><input type="range" id="rel" min="0.03" max="1.5" step="0.01" value="0.25">
+      <span class="pill" id="relOut"></span>
+    </div>
+    <div class="log" id="log"></div>
+  </section>
+
+  <section class="panel">
+    <details id="mapPanel">
+      <summary>Books → notes</summary>
+      <p class="hint">Touch a book and its row lights up. Pick its note, then Save to board. The main board keeps the map, so it works the same on any phone or computer.</p>
+      <div class="row" style="margin:10px 0">
+        <button id="btnMapLoad">Load from board</button>
+        <button id="btnMapSave" class="primary">Save to board</button>
+        <select id="mapPreset">
+          <option value="">Presets…</option>
+          <option value="chromatic">Chromatic C4–B5 (all 24 notes)</option>
+          <option value="white">White keys only, C3 up</option>
+          <option value="reverse">Chromatic, reversed (right to left)</option>
+        </select>
+        <button id="btnMapReset" title="Back to the board's default map">Reset</button>
+      </div>
+      <div id="mapRows" class="maprows"></div>
+      <p class="hint" id="mapMsg"></p>
+    </details>
+  </section>
+
+  <section class="panel">
+    <details>
+      <summary>Getting the lowest delay</summary>
+      <ul>
+        <li><b>All:</b> use wired headphones or speakers. Bluetooth audio adds 100–250 ms.</li>
+        <li><b>Windows:</b> Chrome or Edge. Set the sound device to 48 kHz and turn off "audio enhancements". Close other apps that use audio.</li>
+        <li><b>Mac:</b> Chrome. Built-in speakers or a USB audio interface are fastest.</li>
+        <li><b>Android:</b> Chrome, with battery saver off. Phones vary: newer Pixels and Samsungs are fastest. If the delay shows over 40 ms, try another device.</li>
+        <li>The <b>Audio output delay</b> number above is what the browser reports. Touch to MIDI on the board is about 4–6 ms on top of that.</li>
+      </ul>
+    </details>
+  </section>
+
+  <footer>
+    Piano: Salamander Grand Piano by Alexander Holm, licensed CC BY 3.0 (samples via Tone.js). Credit this in posts that use it.
+  </footer>
+</main>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+
+// ---- samples: Salamander, recorded every minor third ----
+const SAMPLE_NAMES = ["A0"];
+for (let o = 1; o <= 7; o++) SAMPLE_NAMES.push(`C${o}`, `Ds${o}`, `Fs${o}`, `A${o}`);
+SAMPLE_NAMES.push("C8");
+const PC = { C: 0, Ds: 3, Fs: 6, A: 9 };
+const nameToMidi = n => { const m = n.match(/^([A-Z]s?)(\d)$/); return 12 * (+m[2] + 1) + PC[m[1]]; };
+
+let ctx, master;
+const samples = [];          // {midi, buffer, offset}
+const voices = new Map();    // midi note -> {src, gain}
+let count = 0, midiOut = null;
+
+// MP3s start with encoder padding (silence). Skip it so the note starts instantly.
+function onsetOffset(buf) {
+  const d = buf.getChannelData(0), limit = Math.min(d.length, buf.sampleRate * 0.2);
+  for (let i = 0; i < limit; i++) if (Math.abs(d[i]) > 0.003) return Math.max(0, i - 16) / buf.sampleRate;
+  return 0;
+}
+
+async function loadSamples() {
+  let done = 0;
+  await Promise.all(SAMPLE_NAMES.map(async n => {
+    const res = await fetch(`samples/${n}.mp3`);
+    const buf = await ctx.decodeAudioData(await res.arrayBuffer());
+    samples.push({ midi: nameToMidi(n), buffer: buf, offset: onsetOffset(buf) });
+    $("vSamples").textContent = `${++done}/${SAMPLE_NAMES.length}`;
+  }));
+  samples.sort((a, b) => a.midi - b.midi);
+}
+
+function nearest(midi) {
+  let best = samples[0];
+  for (const s of samples) if (Math.abs(s.midi - midi) < Math.abs(best.midi - midi)) best = s;
+  return best;
+}
+
+// ---- voices ----
+function noteOn(midi, velocity, t0) {
+  if (!ctx || !samples.length) return;
+  stopVoice(midi, 0.015);                       // retrigger: quick fade of the old one
+  const s = nearest(midi);
+  const src = ctx.createBufferSource();
+  src.buffer = s.buffer;
+  src.playbackRate.value = Math.pow(2, (midi - s.midi) / 12);
+  const g = ctx.createGain();
+  g.gain.value = Math.pow(velocity / 127, 1.6) * 1.2;
+  src.connect(g).connect(master);
+  src.start(0, s.offset);                       // now — no scheduling lookahead
+  voices.set(midi, { src, gain: g });
+  if (t0 != null) $("vProc").textContent = (performance.now() - t0).toFixed(1) + " ms";
+  count++;
+  $("vCount").textContent = count;
+  $("vLast").textContent = noteName(midi);
+  setKey(midi, true);
+}
+function noteOff(midi) { stopVoice(midi, +$("rel").value / 4); setKey(midi, false); }
+function stopVoice(midi, tau) {
+  const v = voices.get(midi);
+  if (!v) return;
+  const now = ctx.currentTime;
+  v.gain.gain.cancelScheduledValues(now);
+  v.gain.gain.setValueAtTime(v.gain.gain.value, now);
+  v.gain.gain.setTargetAtTime(0, now, tau);
+  v.src.stop(now + tau * 6);
+  voices.delete(midi);
+}
+
+// ---- audio ----
+async function startAudio() {
+  // latencyHint 0 asks for the smallest buffer the device allows
+  ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 0 });
+  master = ctx.createGain();
+  master.gain.value = +$("vol").value;
+  master.connect(ctx.destination);
+  if (ctx.state !== "running") await ctx.resume();
+  showLatency();
+  setInterval(showLatency, 2000);
+}
+function showLatency() {
+  const base = (ctx.baseLatency || 0) * 1000, out = (ctx.outputLatency || 0) * 1000;
+  const total = base + out;
+  $("vOut").textContent = total ? total.toFixed(1) + " ms" : "n/a";
+  $("vOut").className = "value" + (total > 40 ? " warn" : "");
+  $("vOutSub").textContent = `buffer ${base.toFixed(1)} ms + device ${out ? out.toFixed(1) + " ms" : "?"} · ${ctx.sampleRate / 1000} kHz`;
+}
+
+// ---- MIDI ----
+async function startMidi() {
+  if (!navigator.requestMIDIAccess) { setMidi(false, "This browser has no Web MIDI. Use Chrome or Edge"); return; }
+  // SysEx carries the books→notes settings. If the browser refuses it, playing still works.
+  let access;
+  try { access = await navigator.requestMIDIAccess({ sysex: true }); sysexOk = true; }
+  catch { access = await navigator.requestMIDIAccess({ sysex: false }); sysexOk = false; }
+  const hook = () => {
+    let names = [];
+    for (const input of access.inputs.values()) { input.onmidimessage = onMidi; names.push(input.name); }
+    midiOut = [...access.outputs.values()].find(o => /book piano/i.test(o.name)) || null;
+    const book = names.find(n => /book piano/i.test(n));
+    setMidi(names.length > 0, book || names[0] || "No MIDI device: plug in the board");
+    if (midiOut && sysexOk && !boardMap) midiOut.send([...SYX, 0x01, 0xF7]);  // fetch the books→notes map
+  };
+  access.onstatechange = hook;
+  hook();
+}
+function setMidi(ok, text) { $("midiDot").classList.toggle("on", ok); $("midiText").textContent = text; }
+
+function onMidi(e) {
+  const t0 = performance.now();               // play first, everything else after
+  const [st, a, b] = e.data, type = st & 0xF0;
+  if (st === 0xF0) { onSysex(e.data); return; }
+  if (type === 0x90 && b > 0) noteOn(a, b, t0);
+  else if (type === 0x80 || (type === 0x90 && b === 0)) noteOff(a);
+  else if (type === 0xB0 && a === 116) log({ 1: "Board re-baselined", 2: "Board learned your taps", 3: "Learned taps cleared",
+    4: "Boards are in update mode for 10 min (books won't play). First time? Join the BookPiano-Setup Wi-Fi to enter your Wi-Fi." }[b] || `Board reply ${b}`);
+}
+function sendCC(cc) {
+  if (!midiOut) { log("Board not connected"); return; }
+  midiOut.send([0xB0, cc, 127]);
+}
+$("btnBase").onclick = () => { log("Re-baselining… hands off"); sendCC(119); };
+$("btnLearn").onclick = () => { log("LEARNING: tap every book for 10 s"); sendCC(118); };
+$("btnForget").onclick = () => sendCC(117);
+$("btnUpdate").onclick = () => { if (confirm("Put both boards in update mode for 10 minutes? The books won't play until the update finishes or time runs out.")) sendCC(115); };
+
+// ---- on-screen keyboard (spans whatever the books are mapped to) + computer keys ----
+const NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+const noteName = m => NAMES[m % 12] + (Math.floor(m / 12) - 1);
+const isBlack = m => [1, 3, 6, 8, 10].includes(m % 12);
+const keyEls = new Map();
+function buildKeyboard(notes) {
+  const LOW = Math.min(...notes) - (Math.min(...notes) % 12), HIGH = Math.max(...notes) + (11 - Math.max(...notes) % 12);
+  const kb = $("kb");
+  kb.innerHTML = ""; keyEls.clear();
+  const whites = [];
+  for (let m = LOW; m <= HIGH; m++) if (!isBlack(m)) whites.push(m);
+  const w = 100 / whites.length;
+  whites.forEach(m => { const el = document.createElement("div"); el.className = "white"; el.textContent = m % 12 === 0 ? noteName(m) : ""; el.dataset.m = m; kb.appendChild(el); keyEls.set(m, el); });
+  for (let m = LOW; m <= HIGH; m++) {
+    if (!isBlack(m)) continue;
+    const i = whites.indexOf(m - 1) + 1;          // sits on the line after the white key below it
+    const el = document.createElement("div"); el.className = "black"; el.dataset.m = m;
+    el.style.left = `calc(${i * w}% - ${w * 0.32}%)`; el.style.width = `${w * 0.64}%`;
+    kb.appendChild(el); keyEls.set(m, el);
+  }
+}
+$("kb").addEventListener("pointerdown", e => { const m = +e.target.dataset.m; if (m) { e.target.setPointerCapture(e.pointerId); noteOn(m, 100, performance.now()); } });
+const kbUp = e => { const m = +e.target.dataset.m; if (m) noteOff(m); };
+$("kb").addEventListener("pointerup", kbUp); $("kb").addEventListener("pointercancel", kbUp);
+buildKeyboard(Array.from({ length: 24 }, (_, i) => 60 + i));
+function setKey(m, down) { const el = keyEls.get(m); if (el) el.classList.toggle("down", down); }
+const KEYMAP = { a: 60, w: 61, s: 62, e: 63, d: 64, f: 65, t: 66, g: 67, y: 68, h: 69, u: 70, j: 71, k: 72 };
+addEventListener("keydown", e => { const m = KEYMAP[e.key.toLowerCase()]; if (m && !e.repeat) noteOn(m, 100, performance.now()); });
+addEventListener("keyup", e => { const m = KEYMAP[e.key.toLowerCase()]; if (m) noteOff(m); });
+
+// ---- books → notes map (kept on the main board, SysEx F0 7D 42 …) ----
+let sysexOk = false, boardMap = null, editMap = null;
+const SYX = [0xF0, 0x7D, 0x42];
+function sendSysex(body) {
+  if (!midiOut) { $("mapMsg").textContent = "Board not connected."; return false; }
+  if (!sysexOk) { $("mapMsg").textContent = "This browser didn't allow MIDI settings (SysEx). Reload and allow it."; return false; }
+  midiOut.send([...SYX, ...body, 0xF7]);
+  return true;
+}
+function onSysex(d) {
+  if (d[1] !== 0x7D || d[2] !== 0x42) return;
+  if (d[3] === 0x02) {                     // the board's map
+    boardMap = Array.from(d.slice(5, 5 + d[4]));
+    editMap = boardMap.slice();
+    renderMap();
+    buildKeyboard(boardMap);
+    $("mapMsg").textContent = "Loaded from board.";
+  } else if (d[3] === 0x06) flashRow(d[4]); // a book was touched
+}
+const noteOptions = (() => { let s = ""; for (let m = 36; m <= 96; m++) s += `<option value="${m}">${noteName(m)}</option>`; return s; })();
+function renderMap() {
+  if (!editMap) { $("mapRows").innerHTML = ""; return; }
+  $("mapRows").innerHTML = editMap.map((n, i) => {
+    const board = i < 12 ? "main" : "second", pin = (i % 12) + 1;
+    return `<div class="maprow${boardMap && n !== boardMap[i] ? " dirty" : ""}" id="map${i}">
+      <span class="who"><b>Book ${i + 1}</b> · ${board} GPIO${pin}</span>
+      <select data-i="${i}">${noteOptions}</select></div>`;
+  }).join("");
+  editMap.forEach((n, i) => { $("mapRows").querySelector(`select[data-i="${i}"]`).value = n; });
+}
+$("mapRows").addEventListener("change", e => {
+  const i = +e.target.dataset.i;
+  editMap[i] = +e.target.value;
+  $("map" + i).classList.toggle("dirty", editMap[i] !== boardMap[i]);
+  noteOn(editMap[i], 100, null); setTimeout(() => noteOff(editMap[i]), 300);  // let you hear it
+  $("mapMsg").textContent = "Not saved yet.";
+});
+function flashRow(k) {
+  const el = $("map" + k);
+  if (!el) return;
+  el.classList.add("hit");
+  el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove("hit"), 900);
+}
+$("mapPanel").addEventListener("toggle", () => {
+  const open = $("mapPanel").open;
+  if (sendSysex([0x05, open ? 1 : 0]) && open) sendSysex([0x01]);  // identify mode while open
+});
+$("btnMapLoad").onclick = () => sendSysex([0x01]);
+$("btnMapSave").onclick = () => {
+  if (!editMap) return;
+  if (sendSysex([0x03, editMap.length, ...editMap])) $("mapMsg").textContent = "Saving…";
+};
+$("btnMapReset").onclick = () => { if (confirm("Reset the board to its default map (chromatic C4–B5)?")) sendSysex([0x04]); };
+$("mapPreset").onchange = () => {
+  const p = $("mapPreset").value; $("mapPreset").value = "";
+  if (!editMap) { $("mapMsg").textContent = "Load from board first."; return; }
+  const n = editMap.length;
+  if (p === "chromatic") editMap = Array.from({ length: n }, (_, i) => 60 + i);
+  if (p === "reverse") editMap = Array.from({ length: n }, (_, i) => 60 + n - 1 - i);
+  if (p === "white") { editMap = []; for (let m = 48; editMap.length < n; m++) if (!isBlack(m)) editMap.push(m); }
+  renderMap();
+  $("mapMsg").textContent = "Preset applied. Not saved yet.";
+};
+
+// ---- misc ----
+$("vol").oninput = () => { if (master) master.gain.value = +$("vol").value; };
+const syncRel = () => $("relOut").textContent = (+$("rel").value).toFixed(2) + " s";
+$("rel").oninput = syncRel; syncRel();
+function log(t) { $("log").textContent = new Date().toLocaleTimeString() + "  " + t + "\n" + $("log").textContent; }
+
+// Offline support (installable app). Only on https or localhost.
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+
+$("btnStart").onclick = async () => {
+  $("btnStart").disabled = true;
+  try {
+    $("startMsg").textContent = "Starting audio…";
+    await startAudio();
+    $("startMsg").textContent = "Loading piano…";
+    await loadSamples();
+    await startMidi().catch(err => setMidi(false, "MIDI blocked: " + err.message));
+    $("start").style.display = "none";
+  } catch (err) {
+    $("startMsg").textContent = "Could not start: " + err.message;
+    $("btnStart").disabled = false;
+  }
+};
+</script>
+</body>
+</html>
