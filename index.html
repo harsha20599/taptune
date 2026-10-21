@@ -11,19 +11,19 @@
 <style>
   :root {
     --bg: #f6f5f2; --panel: #ffffff; --ink: #1c1b19; --muted: #6b6862; --line: #e3e0da;
-    --accent: #2f6fdb; --hit: #e0532f; --good: #2e8b57; --bad: #c0392b;
+    --accent: #2f6fdb; --hit: #e0532f; --good: #2e8b57; --bad: #c0392b; --warn: #b07a00;
     --white-key: #fbfaf7; --black-key: #23211e;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #141413; --panel: #1d1c1a; --ink: #f1efe9; --muted: #a29f97; --line: #2f2d2a;
-      --accent: #6c9cf0; --hit: #ff7a52; --good: #5cc28a; --bad: #ef6b5d;
+      --accent: #6c9cf0; --hit: #ff7a52; --good: #5cc28a; --bad: #ef6b5d; --warn: #e5b23a;
       --white-key: #e9e6df; --black-key: #0c0c0b;
     }
   }
   :root[data-theme="dark"] {
     --bg: #141413; --panel: #1d1c1a; --ink: #f1efe9; --muted: #a29f97; --line: #2f2d2a;
-    --accent: #6c9cf0; --hit: #ff7a52; --good: #5cc28a; --bad: #ef6b5d;
+    --accent: #6c9cf0; --hit: #ff7a52; --good: #5cc28a; --bad: #ef6b5d; --warn: #e5b23a;
     --white-key: #e9e6df; --black-key: #0c0c0b;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -66,15 +66,36 @@
   .hint { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
   details summary { cursor: pointer; font-weight: 600; }
   details ul { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
-  .maprows { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 6px; }
-  .maprow { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--line);
-    border-radius: 8px; font-size: 13px; transition: background .15s, border-color .15s; }
-  .maprow .who { flex: 1; color: var(--muted); }
-  .maprow .who b { color: var(--ink); }
-  .maprow select { font: inherit; padding: 4px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
-  .maprow.hit { background: var(--hit); border-color: var(--hit); color: #fff; }
-  .maprow.hit .who, .maprow.hit .who b { color: #fff; }
-  .maprow.dirty { border-color: var(--accent); }
+  select, input[type=number] { font: inherit; padding: 5px 6px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--ink); }
+  .steps { display: flex; gap: 6px; flex-wrap: wrap; margin: 12px 0; }
+  .steps button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .su-status { font-size: 13px; color: var(--muted); margin-top: 10px; }
+  .prompt { border: 1px dashed var(--line); border-radius: 10px; padding: 14px; margin: 10px 0; }
+  .prompt .big { font-size: 20px; font-weight: 650; }
+  .dots { display: flex; gap: 6px; margin-top: 8px; }
+  .dots i { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line); }
+  .dots i.done { background: var(--good); border-color: var(--good); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip { font-size: 12px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line); white-space: nowrap; }
+  .chip.good { color: var(--good); border-color: var(--good); }
+  .chip.warnc { color: var(--warn); border-color: var(--warn); }
+  .chip.badc { color: var(--bad); border-color: var(--bad); }
+  .tablewrap { overflow-x: auto; }
+  table.review { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  table.review th, table.review td { text-align: left; padding: 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  table.review th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  table.review tr.hit td { background: var(--hit); color: #fff; }
+  table.review input[type=range] { min-width: 90px; width: 110px; }
+  .bar { position: relative; width: 110px; height: 10px; background: var(--line); border-radius: 5px; overflow: hidden; }
+  .bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); }
+  .bar b { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: var(--hit); }
+  .bar.touch i { background: var(--hit); }
+  .notegrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px; margin-top: 10px; }
+  .notegrid div { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; }
+  .notegrid span { flex: 1; color: var(--muted); }
+  .notegrid div.hit { background: var(--hit); border-color: var(--hit); }
+  .notegrid div.hit span { color: #fff; }
   footer { color: var(--muted); font-size: 12px; margin-top: 18px; }
   footer a { color: inherit; }
   .warn { color: var(--bad); }
@@ -103,15 +124,13 @@
 
   <section class="panel">
     <div class="keyboard" id="kb"></div>
-    <p class="hint">24 books = C4 to B5: books 1–12 on the main board, 13–24 on the second board. You can also tap the keys here or use the computer keys A S D F G H J K (W E T Y U for the black keys).</p>
+    <p class="hint">The keyboard shows the notes your books play (set them in Setup). You can also tap the keys here or use the computer keys A S D F G H J K (W E T Y U for the black keys).</p>
   </section>
 
   <section class="panel">
     <h2>Books</h2>
     <div class="row">
-      <button id="btnBase" title="Board re-measures every book's resting level. Hands off!">Re-baseline (hands off)</button>
-      <button id="btnLearn" title="10 s: tap every book a few times">Learn taps (10 s)</button>
-      <button id="btnForget">Forget learned</button>
+      <button id="btnBase" title="Both boards re-measure every book's resting level. Hands off!">Re-baseline (hands off)</button>
       <button id="btnUpdate" title="Both boards join Wi-Fi and wait 10 min for new firmware. No playing meanwhile.">Update mode</button>
     </div>
     <div class="row" style="margin-top:12px">
@@ -125,22 +144,17 @@
   </section>
 
   <section class="panel">
-    <details id="mapPanel">
-      <summary>Books → notes</summary>
-      <p class="hint">Touch a book and its row lights up. Pick its note, then Save to board. The main board keeps the map, so it works the same on any phone or computer.</p>
-      <div class="row" style="margin:10px 0">
-        <button id="btnMapLoad">Load from board</button>
-        <button id="btnMapSave" class="primary">Save to board</button>
-        <select id="mapPreset">
-          <option value="">Presets…</option>
-          <option value="chromatic">Chromatic C4–B5 (all 24 notes)</option>
-          <option value="white">White keys only, C3 up</option>
-          <option value="reverse">Chromatic, reversed (right to left)</option>
-        </select>
-        <button id="btnMapReset" title="Back to the board's default map">Reset</button>
+    <details id="setupPanel">
+      <summary>Setup: books, notes &amp; sensitivity</summary>
+      <div class="su-status" id="suStatus">Connect the board to set up.</div>
+      <div class="steps" id="suSteps">
+        <button data-step="1">1 · Rest</button>
+        <button data-step="2">2 · Find books</button>
+        <button data-step="3">3 · Notes</button>
+        <button data-step="4">4 · Review &amp; save</button>
       </div>
-      <div id="mapRows" class="maprows"></div>
-      <p class="hint" id="mapMsg"></p>
+      <div id="suBody"></div>
+      <p class="hint" id="suMsg"></p>
     </details>
   </section>
 
@@ -265,7 +279,7 @@ async function startMidi() {
     midiOut = [...access.outputs.values()].find(o => /book piano/i.test(o.name)) || null;
     const book = names.find(n => /book piano/i.test(n));
     setMidi(names.length > 0, book || names[0] || "No MIDI device: plug in the board");
-    if (midiOut && sysexOk && !boardMap) midiOut.send([...SYX, 0x01, 0xF7]);  // fetch the books→notes map
+    if (midiOut && sysexOk && !boardCfg) midiOut.send([...SYX, 0x10, 0xF7]);  // fetch the board's setup
   };
   access.onstatechange = hook;
   hook();
@@ -278,7 +292,7 @@ function onMidi(e) {
   if (st === 0xF0) { onSysex(e.data); return; }
   if (type === 0x90 && b > 0) noteOn(a, b, t0);
   else if (type === 0x80 || (type === 0x90 && b === 0)) noteOff(a);
-  else if (type === 0xB0 && a === 116) log({ 1: "Board re-baselined", 2: "Board learned your taps", 3: "Learned taps cleared",
+  else if (type === 0xB0 && a === 116) log({ 1: "Boards re-baselined",
     4: "Boards are in update mode for 10 min (books won't play). First time? Join the BookPiano-Setup Wi-Fi to enter your Wi-Fi." }[b] || `Board reply ${b}`);
 }
 function sendCC(cc) {
@@ -286,8 +300,6 @@ function sendCC(cc) {
   midiOut.send([0xB0, cc, 127]);
 }
 $("btnBase").onclick = () => { log("Re-baselining… hands off"); sendCC(119); };
-$("btnLearn").onclick = () => { log("LEARNING: tap every book for 10 s"); sendCC(118); };
-$("btnForget").onclick = () => sendCC(117);
 $("btnUpdate").onclick = () => { if (confirm("Put both boards in update mode for 10 minutes? The books won't play until the update finishes or time runs out.")) sendCC(115); };
 
 // ---- on-screen keyboard (spans whatever the books are mapped to) + computer keys ----
@@ -320,70 +332,351 @@ const KEYMAP = { a: 60, w: 61, s: 62, e: 63, d: 64, f: 65, t: 66, g: 67, y: 68, 
 addEventListener("keydown", e => { const m = KEYMAP[e.key.toLowerCase()]; if (m && !e.repeat) noteOn(m, 100, performance.now()); });
 addEventListener("keyup", e => { const m = KEYMAP[e.key.toLowerCase()]; if (m) noteOff(m); });
 
-// ---- books → notes map (kept on the main board, SysEx F0 7D 42 …) ----
-let sysexOk = false, boardMap = null, editMap = null;
+// ---- setup: books, notes & sensitivity ----
+// The main board keeps the setup. A SENSOR is a board + pin (0–13 main GPIO1–14,
+// 14–27 second GPIO1–14); a BOOK is a shelf position pointing at one sensor,
+// with a note. Each sensor has a touch threshold in bp (0.01 % of its resting
+// level). Talks SysEx F0 7D 42 … (see the board's config.ino).
+let sysexOk = false;
 const SYX = [0xF0, 0x7D, 0x42];
+const NSENS = 28, PINS = 14, NO_SENSOR = 127;
+let boardCfg = null, draft = null, info = null;
+let tele = Array.from({ length: NSENS }, () => ({ online: false, touched: false, used: false, now: 0, peak: 0, noise: 0, thr: 0 }));
+let step = 1, keepTimer = null;
+let wiz = null;          // step 2 state
+let found = {};          // book index → { sensor, taps: [peak bp], cross: { sensor: peak bp } }
+let restState = "";      // step 1: "", "measuring", "done"
+const sensorName = s => s === NO_SENSOR ? "—" : (s < PINS ? "Main" : "Second") + " GPIO" + (s % PINS + 1);
+const pct = bp => (bp / 100).toFixed(bp < 1000 ? 1 : 0) + "%";
+const clone = c => JSON.parse(JSON.stringify(c));
+const median = a => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : 0; };
+
 function sendSysex(body) {
-  if (!midiOut) { $("mapMsg").textContent = "Board not connected."; return false; }
-  if (!sysexOk) { $("mapMsg").textContent = "This browser didn't allow MIDI settings (SysEx). Reload and allow it."; return false; }
+  if (!midiOut) { $("suMsg").textContent = "Board not connected."; return false; }
+  if (!sysexOk) { $("suMsg").textContent = "This browser didn't allow MIDI settings (SysEx). Reload the page and allow it."; return false; }
   midiOut.send([...SYX, ...body, 0xF7]);
   return true;
 }
+const get14 = (d, i) => d[i] | (d[i + 1] << 7);
+
+function parseCfg(p) {  // payload after the command byte
+  const c = { ver: p[0], numBooks: p[1], transpose: p[2] - 64, velocity: p[3], bookSensor: [], bookNote: [], thr: [] };
+  for (let k = 0; k < NSENS; k++) { c.bookSensor.push(p[4 + k]); c.bookNote.push(p[4 + NSENS + k]); }
+  for (let s = 0; s < NSENS; s++) c.thr.push(get14(p, 4 + 2 * NSENS + 2 * s));
+  return c;
+}
+function encodeCfg(c) {
+  const out = [0x12, 2, c.numBooks, c.transpose + 64, c.velocity, ...c.bookSensor, ...c.bookNote];
+  for (const t of c.thr) out.push(t & 0x7F, (t >> 7) & 0x7F);
+  return out;
+}
+const notesOf = c => c.bookNote.slice(0, c.numBooks).map(n => Math.max(0, Math.min(127, n + c.transpose)));
+
 function onSysex(d) {
   if (d[1] !== 0x7D || d[2] !== 0x42) return;
-  if (d[3] === 0x02) {                     // the board's map
-    boardMap = Array.from(d.slice(5, 5 + d[4]));
-    editMap = boardMap.slice();
-    renderMap();
-    buildKeyboard(boardMap);
-    $("mapMsg").textContent = "Loaded from board.";
-  } else if (d[3] === 0x06) flashRow(d[4]); // a book was touched
+  const cmd = d[3];
+  if (cmd === 0x11) {
+    boardCfg = parseCfg(d.slice(4, d.length - 1));
+    const wasSaving = draft && draft.saving;
+    if (!draft || wasSaving) draft = clone(boardCfg);
+    $("suMsg").textContent = wasSaving ? "Saved to the board ✓" : "";
+    if (boardCfg.numBooks) buildKeyboard(notesOf(boardCfg));
+    renderSetup();
+  } else if (cmd === 0x21) {
+    for (let s = 0, i = 5; s < Math.min(d[4], NSENS); s++, i += 9) {
+      const f = d[i];
+      tele[s] = { online: !!(f & 1), touched: !!(f & 2), used: !!(f & 4), now: get14(d, i + 1) - 8192,
+                  peak: get14(d, i + 3), noise: get14(d, i + 5), thr: get14(d, i + 7) };
+    }
+    wizFrame();
+    updateLive();
+  } else if (cmd === 0x31) {
+    flashSensor(d[4]);
+  } else if (cmd === 0x23) {
+    setTimeout(() => { restState = "done"; renderSetup(); }, 1500);  // the second board finishes a moment later
+  } else if (cmd === 0x25) {
+    info = { fw: `${d[4]}.${d[5]}`, childOnline: !!d[6], inSync: !!d[7], ch: d[8], pins: d[9] };
+    renderStatus();
+  }
 }
-const noteOptions = (() => { let s = ""; for (let m = 36; m <= 96; m++) s += `<option value="${m}">${noteName(m)}</option>`; return s; })();
-function renderMap() {
-  if (!editMap) { $("mapRows").innerHTML = ""; return; }
-  $("mapRows").innerHTML = editMap.map((n, i) => {
-    const board = i < 12 ? "main" : "second", pin = (i % 12) + 1;
-    return `<div class="maprow${boardMap && n !== boardMap[i] ? " dirty" : ""}" id="map${i}">
-      <span class="who"><b>Book ${i + 1}</b> · ${board} GPIO${pin}</span>
-      <select data-i="${i}">${noteOptions}</select></div>`;
-  }).join("");
-  editMap.forEach((n, i) => { $("mapRows").querySelector(`select[data-i="${i}"]`).value = n; });
-}
-$("mapRows").addEventListener("change", e => {
-  const i = +e.target.dataset.i;
-  editMap[i] = +e.target.value;
-  $("map" + i).classList.toggle("dirty", editMap[i] !== boardMap[i]);
-  noteOn(editMap[i], 100, null); setTimeout(() => noteOff(editMap[i]), 300);  // let you hear it
-  $("mapMsg").textContent = "Not saved yet.";
+
+// ---- panel open/close: live sensor data only while it's open ----
+$("setupPanel").addEventListener("toggle", () => {
+  const open = $("setupPanel").open;
+  clearInterval(keepTimer);
+  if (!open) { sendSysex([0x20, 0]); return; }
+  const keep = () => { sendSysex([0x20, 1]) && sendSysex([0x24]); };
+  keep();
+  keepTimer = setInterval(keep, 4000);
+  sendSysex([0x10]);
+  renderSetup();
 });
-function flashRow(k) {
-  const el = $("map" + k);
+$("suSteps").addEventListener("click", e => { const s = +e.target.dataset.step; if (s) { step = s; renderSetup(); } });
+
+function renderStatus() {
+  const second = info ? (info.childOnline ? `online${info.inSync ? "" : " (syncing…)"}` : "offline") : "?";
+  $("suStatus").textContent = boardCfg
+    ? `Main board ✓ · Second board: ${second}${info ? ` · radio channel ${info.ch} · firmware ${info.fw}` : ""} · ${boardCfg.numBooks} books`
+    : "Waiting for the board…";
+}
+
+function renderSetup() {
+  renderStatus();
+  document.querySelectorAll("#suSteps button").forEach(b => b.classList.toggle("on", +b.dataset.step === step));
+  if (!draft) { $("suBody").innerHTML = "<p class='hint'>Plug in the board and allow MIDI.</p>"; return; }
+  ({ 1: renderRest, 2: renderFind, 3: renderNotes, 4: renderReview })[step]();
+}
+
+// ---- step 1: rest ----
+function renderRest() {
+  const noisy = tele.map((t, s) => ({ t, s })).filter(x => x.t.online && x.t.used && x.t.noise > 100);
+  $("suBody").innerHTML = `
+    <div class="prompt">
+      <div class="big">${restState === "measuring" ? "Measuring… hands off" : "Take your hands away from all the books"}</div>
+      <p class="hint">Both boards measure every sensor's resting level and background noise. Do this whenever the books, cables or power change.</p>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" id="suMeasure" ${restState === "measuring" ? "disabled" : ""}>Measure resting level</button>
+        ${restState === "done" ? `<button id="suNext2">Next: find books →</button>` : ""}
+      </div>
+    </div>
+    ${restState === "done" ? `<p class="hint">Done. ${tele.slice(0, PINS).filter(t => t.online).length} sensors on the main board, ${tele.slice(PINS).filter(t => t.online).length} on the second.${tele.slice(PINS).some(t => t.online) ? "" : " <span class='warn'>Second board not connected.</span>"}
+      ${noisy.length ? `<span class="warn">Noisy: ${noisy.map(x => sensorName(x.s)).join(", ")}. Check those wires aren't loose or bundled.</span>` : "Noise is low on every book. 👍"}</p>` : ""}`;
+  $("suMeasure").onclick = () => { if (sendSysex([0x22])) { restState = "measuring"; renderSetup(); } };
+  if ($("suNext2")) $("suNext2").onclick = () => { step = 2; renderSetup(); };
+}
+
+// ---- step 2: find books (touch each book 3 times, left to right) ----
+const TAPS = 3;
+function renderFind() {
+  const n = wiz ? wiz.numBooks : draft.numBooks;
+  const chips = Object.entries(found).sort((a, b) => a[0] - b[0]).map(([k, f]) =>
+    `<span class="chip good">Book ${+k + 1} → ${sensorName(f.sensor)} · ${pct(median(f.taps))}</span>`).join("");
+  let prompt;
+  if (!wiz) prompt = `<div class="big">Find which sensor each book is on</div>
+      <p class="hint">You'll touch each book 3 times, from the left. This also measures how strong your taps are and whether books disturb their neighbours.</p>`;
+  else if (wiz.done) prompt = `<div class="big">All ${Object.keys(found).length} books found ✓</div>
+      <p class="hint">Next: choose the notes, then review the sensitivity and save.</p>`;
+  else prompt = `<div class="big">Touch book ${wiz.k + 1} <span class="hint">(${wiz.k === 0 ? "the leftmost" : "next to the right"})</span></div>
+      <p class="hint">${wiz.sensor == null ? "Tap it normally, the way you'll play it." : `${sensorName(wiz.sensor)} · tap ${wiz.taps.length + (wiz.inTap ? 1 : 0)} of ${TAPS}`}${wiz.note ? " · " + wiz.note : ""}</p>
+      <div class="dots">${Array.from({ length: TAPS }, (_, i) => `<i class="${i < wiz.taps.length ? "done" : ""}"></i>`).join("")}</div>`;
+  $("suBody").innerHTML = `
+    <div class="row"><label for="suN">How many books?</label>
+      <input type="number" id="suN" min="1" max="28" value="${n}" style="width:70px" ${wiz && !wiz.done ? "disabled" : ""}>
+      <button class="${wiz ? "" : "primary"}" id="suFindStart">${wiz ? "Start over" : "Start"}</button></div>
+    <div class="prompt">${prompt}
+      ${wiz && !wiz.done ? `<div class="row" style="margin-top:10px">
+        <button id="suRedo">Redo this book</button><button id="suSkip">No book here, skip</button>
+        <button id="suBack" ${wiz.k ? "" : "disabled"}>← Back</button><button id="suFinish">Finish early</button></div>` : ""}
+      ${wiz && wiz.done ? `<div class="row" style="margin-top:10px"><button class="primary" id="suNext3">Next: notes →</button></div>` : ""}
+    </div>
+    <div class="chips">${chips}</div>`;
+  $("suFindStart").onclick = () => {
+    const nb = Math.max(1, Math.min(28, +$("suN").value || 24));
+    found = {};
+    wiz = { numBooks: nb, k: 0, sensor: null, taps: [], inTap: false, cross: {}, ref: 0, cur: 0, note: "" };
+    renderSetup();
+  };
+  if (!wiz) return;
+  if ($("suRedo")) $("suRedo").onclick = () => { resetBook(); renderSetup(); };
+  if ($("suSkip")) $("suSkip").onclick = () => { delete found[wiz.k]; nextBook(); };
+  if ($("suBack")) $("suBack").onclick = () => { wiz.k--; delete found[wiz.k]; resetBook(); renderSetup(); };
+  if ($("suFinish")) $("suFinish").onclick = () => finishFind();
+  if ($("suNext3")) $("suNext3").onclick = () => { step = 3; renderSetup(); };
+}
+function resetBook() { Object.assign(wiz, { sensor: null, taps: [], inTap: false, cross: {}, ref: 0, cur: 0, note: "" }); }
+function nextBook() {
+  wiz.k++;
+  resetBook();
+  if (wiz.k >= wiz.numBooks) return finishFind();
+  renderSetup();
+}
+function finishFind() {
+  wiz.done = true;
+  // Books found become the new layout; books skipped have no sensor.
+  const nb = wiz.numBooks;
+  draft.numBooks = nb;
+  for (let k = 0; k < NSENS; k++) draft.bookSensor[k] = k < nb && found[k] ? found[k].sensor : NO_SENSOR;
+  applySuggested();
+  renderSetup();
+}
+function wizFrame() {
+  if (!wiz || wiz.done || step !== 2) return;
+  const taken = new Set(Object.entries(found).filter(([k]) => +k !== wiz.k).map(([, f]) => f.sensor));
+  if (wiz.sensor == null) {
+    // which sensor rose clearly above its noise, well ahead of the others?
+    const score = s => tele[s].online ? tele[s].peak / Math.max(4 * tele[s].noise, 100) : 0;
+    let best = -1, bestScore = 0, second = 0;
+    for (let s = 0; s < NSENS; s++) {
+      const sc = score(s);
+      if (sc > bestScore) { second = bestScore; bestScore = sc; best = s; } else if (sc > second) second = sc;
+    }
+    if (best < 0 || tele[best].peak < Math.max(6 * tele[best].noise, 150) || bestScore < 2 * second) return;
+    if (taken.has(best)) {
+      const k = Object.entries(found).find(([, f]) => f.sensor === best)[0];
+      wiz.note = `that was book ${+k + 1}, touch book ${wiz.k + 1}`;
+      renderSetup();
+      return;
+    }
+    Object.assign(wiz, { sensor: best, ref: tele[best].peak, cur: tele[best].peak, inTap: true, note: "" });
+    renderSetup();
+    return;
+  }
+  const s = wiz.sensor, p = tele[s].peak;
+  if (wiz.inTap) {
+    wiz.cur = Math.max(wiz.cur, p);
+    for (let o = 0; o < NSENS; o++) if (o !== s && tele[o].online) wiz.cross[o] = Math.max(wiz.cross[o] || 0, tele[o].peak);
+    if (p < 0.2 * wiz.ref) {  // finger lifted
+      wiz.taps.push(wiz.cur);
+      wiz.inTap = false;
+      if (wiz.taps.length >= TAPS) {
+        found[wiz.k] = { sensor: s, taps: wiz.taps.slice(), cross: { ...wiz.cross } };
+        return nextBook();
+      }
+      renderSetup();
+    }
+  } else if (p > 0.4 * wiz.ref) { wiz.inTap = true; wiz.cur = p; renderSetup(); }
+}
+
+// ---- thresholds from what step 2 measured ----
+// threshold = 45 % of a typical tap, but at least 4× the idle noise (1 % minimum)
+// and 1.4× the most this sensor rose while other books were tapped.
+function analyse(k) {
+  const s = draft.bookSensor[k];
+  if (s === NO_SENSOR || s == null) return null;
+  const f = Object.values(found).find(x => x.sensor === s);
+  const tap = f ? median(f.taps) : null;
+  const noise = tele[s] ? tele[s].noise : 0;
+  let cross = 0, crossBook = null;
+  for (const [j, g] of Object.entries(found)) if (g.sensor !== s && (g.cross[s] || 0) > cross) { cross = g.cross[s]; crossBook = +j; }
+  const floor = Math.max(4 * noise, 100);
+  const thr = draft.thr[s];
+  let status = "good", text = "Good";
+  if (tap != null) {
+    const margin = tap / thr;
+    if (tap < 2 * floor) { status = "badc"; text = "Weak signal"; }
+    else if (cross * 1.2 > thr) { status = "badc"; text = `Also fires with book ${crossBook + 1}`; }
+    else if (margin < 1.5) { status = "warnc"; text = "Tight: may miss soft taps"; }
+    else if (cross > 0.5 * thr) { status = "warnc"; text = `Near book ${crossBook + 1}`; }
+  } else if (thr < floor) { status = "warnc"; text = "Below noise"; }
+  else { status = ""; text = "Not measured"; }
+  return { s, tap, noise, cross, crossBook, floor, thr, status, text };
+}
+function applySuggested() {
+  for (let k = 0; k < draft.numBooks; k++) {
+    const a = analyse(k);
+    if (!a || a.tap == null) continue;
+    let t = Math.max(0.45 * a.tap, a.floor, 1.4 * a.cross);
+    t = Math.min(t, Math.max(0.8 * a.tap, a.floor));  // never above what a normal tap reaches
+    draft.thr[a.s] = Math.round(Math.min(Math.max(t, 50), 16000));
+  }
+}
+
+// ---- step 3: notes ----
+const noteOptions = (() => { let s = ""; for (let m = 24; m <= 108; m++) s += `<option value="${m}">${noteName(m)}</option>`; return s; })();
+const SCALES = { chromatic: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], white: [0, 2, 4, 5, 7, 9, 11],
+                 minor: [0, 2, 3, 5, 7, 8, 10], pentatonic: [0, 2, 4, 7, 9] };
+function renderNotes() {
+  $("suBody").innerHTML = `
+    <div class="row">
+      <label>Scale</label><select id="suScale">
+        <option value="chromatic">Chromatic (every note)</option><option value="white">White keys (C major)</option>
+        <option value="minor">Natural minor</option><option value="pentatonic">Major pentatonic</option></select>
+      <label>from</label><select id="suStartNote">${noteOptions}</select>
+      <button id="suApplyScale">Apply to all books</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <label>Transpose</label><input type="number" id="suTr" min="-24" max="24" value="${draft.transpose}" style="width:70px">
+      <span class="hint" style="margin:0">semitones, shifts every book</span>
+    </div>
+    <div class="notegrid" id="suNotes">${Array.from({ length: draft.numBooks }, (_, k) =>
+      `<div id="nb${k}"><span><b>Book ${k + 1}</b> · ${sensorName(draft.bookSensor[k])}</span><select data-k="${k}">${noteOptions}</select></div>`).join("")}</div>
+    <div class="row" style="margin-top:10px"><button class="primary" id="suNext4">Next: review &amp; save →</button></div>`;
+  $("suStartNote").value = draft.bookNote[0] || 60;
+  draft.bookNote.slice(0, draft.numBooks).forEach((n, k) => { $("suNotes").querySelector(`select[data-k="${k}"]`).value = n; });
+  $("suApplyScale").onclick = () => {
+    const steps = SCALES[$("suScale").value], start = +$("suStartNote").value;
+    for (let k = 0; k < draft.numBooks; k++) draft.bookNote[k] = Math.min(127, start + 12 * Math.floor(k / steps.length) + steps[k % steps.length]);
+    renderSetup();
+  };
+  $("suTr").onchange = () => { draft.transpose = Math.max(-24, Math.min(24, +$("suTr").value || 0)); };
+  $("suNotes").onchange = e => {
+    const k = +e.target.dataset.k;
+    draft.bookNote[k] = +e.target.value;
+    const n = draft.bookNote[k] + draft.transpose;
+    noteOn(n, 100, null); setTimeout(() => noteOff(n), 300);
+  };
+  $("suNext4").onclick = () => { step = 4; renderSetup(); };
+}
+
+// ---- step 4: review & save ----
+function renderReview() {
+  const rows = [];
+  for (let k = 0; k < draft.numBooks; k++) {
+    const a = analyse(k), s = draft.bookSensor[k];
+    rows.push(`<tr id="rv${k}">
+      <td><b>${k + 1}</b></td><td>${sensorName(s)}</td><td>${noteName(Math.max(0, draft.bookNote[k] + draft.transpose))}</td>
+      <td>${a && a.tap != null ? pct(a.tap) : "–"}</td>
+      <td>${a ? `<input type="range" data-s="${s}" min="50" max="3000" step="10" value="${a.thr}"> <span id="tv${k}">${pct(a.thr)}</span>` : "–"}</td>
+      <td>${a ? `<div class="bar" id="bar${k}"><i></i><b></b></div>` : ""}</td>
+      <td>${a ? `<span class="chip ${a.status}">${a.text}</span>` : ""}</td></tr>`);
+  }
+  const changed = boardCfg && JSON.stringify(encodeCfg(draft)) !== JSON.stringify(encodeCfg(boardCfg));
+  $("suBody").innerHTML = `
+    <p class="hint" style="margin-top:0">Touch a book: its row lights up and its bar should cross the red line. The threshold is how far a touch must lift that sensor above resting.</p>
+    <div class="tablewrap"><table class="review">
+      <thead><tr><th>Book</th><th>Sensor</th><th>Note</th><th>Your tap</th><th>Threshold</th><th>Live</th><th>Status</th></tr></thead>
+      <tbody id="rvBody">${rows.join("")}</tbody></table></div>
+    <div class="row" style="margin-top:12px">
+      <button class="primary" id="suSave" ${changed ? "" : "disabled"}>${changed ? "Save to board" : "Saved ✓"}</button>
+      <button id="suSuggest" ${Object.keys(found).length ? "" : "disabled"}>Use suggested thresholds</button>
+      <button id="suRevert" ${changed ? "" : "disabled"}>Undo changes</button>
+      <button id="suDefaults">Factory defaults…</button>
+    </div>`;
+  $("rvBody").oninput = e => {
+    const s = +e.target.dataset.s;
+    if (isNaN(s)) return;
+    draft.thr[s] = +e.target.value;
+    const k = draft.bookSensor.indexOf(s);
+    if ($("tv" + k)) $("tv" + k).textContent = pct(draft.thr[s]);
+  };
+  $("rvBody").onchange = () => renderSetup();
+  $("suSave").onclick = () => {
+    draft.saving = true;
+    $("suMsg").textContent = "Saving…";
+    if (!sendSysex(encodeCfg(draft))) draft.saving = false;
+  };
+  $("suSuggest").onclick = () => { applySuggested(); renderSetup(); };
+  $("suRevert").onclick = () => { draft = clone(boardCfg); renderSetup(); };
+  $("suDefaults").onclick = () => {
+    if (confirm("Reset the board to factory defaults? (24 books on GPIO1–12 of each board, chromatic from C4, 3 % thresholds)")) {
+      found = {}; wiz = null; draft.saving = true; sendSysex([0x13]);
+    }
+  };
+}
+
+// live bars + touch highlight (telemetry, 20 per second)
+function updateLive() {
+  if (!$("setupPanel").open || !draft) return;
+  if (step === 4) for (let k = 0; k < draft.numBooks; k++) {
+    const bar = $("bar" + k), s = draft.bookSensor[k];
+    if (!bar || s === NO_SENSOR) continue;
+    const t = tele[s], thr = draft.thr[s] || 1;
+    bar.firstChild.style.width = Math.min(100, Math.max(0, Math.max(t.now, t.peak) / (2 * thr) * 100)) + "%";
+    bar.classList.toggle("touch", t.touched);
+    $("rv" + k).classList.toggle("hit", t.touched);
+  }
+  if (step === 3) for (let k = 0; k < draft.numBooks; k++) {
+    const el = $("nb" + k), s = draft.bookSensor[k];
+    if (el && s !== NO_SENSOR) el.classList.toggle("hit", tele[s].touched);
+  }
+}
+function flashSensor(s) {
+  if (step === 1 || step === 2 || !draft) return;
+  const k = draft.bookSensor.indexOf(s);
+  const el = $((step === 3 ? "nb" : "rv") + k);
   if (!el) return;
-  el.classList.add("hit");
   el.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove("hit"), 900);
 }
-$("mapPanel").addEventListener("toggle", () => {
-  const open = $("mapPanel").open;
-  if (sendSysex([0x05, open ? 1 : 0]) && open) sendSysex([0x01]);  // identify mode while open
-});
-$("btnMapLoad").onclick = () => sendSysex([0x01]);
-$("btnMapSave").onclick = () => {
-  if (!editMap) return;
-  if (sendSysex([0x03, editMap.length, ...editMap])) $("mapMsg").textContent = "Saving…";
-};
-$("btnMapReset").onclick = () => { if (confirm("Reset the board to its default map (chromatic C4–B5)?")) sendSysex([0x04]); };
-$("mapPreset").onchange = () => {
-  const p = $("mapPreset").value; $("mapPreset").value = "";
-  if (!editMap) { $("mapMsg").textContent = "Load from board first."; return; }
-  const n = editMap.length;
-  if (p === "chromatic") editMap = Array.from({ length: n }, (_, i) => 60 + i);
-  if (p === "reverse") editMap = Array.from({ length: n }, (_, i) => 60 + n - 1 - i);
-  if (p === "white") { editMap = []; for (let m = 48; editMap.length < n; m++) if (!isBlack(m)) editMap.push(m); }
-  renderMap();
-  $("mapMsg").textContent = "Preset applied. Not saved yet.";
-};
 
 // ---- misc ----
 $("vol").oninput = () => { if (master) master.gain.value = +$("vol").value; };
