@@ -146,6 +146,14 @@
       <label for="rel">Release</label><input type="range" id="rel" min="0.03" max="1.5" step="0.01" value="0.25">
       <span class="pill" id="relOut"></span>
     </div>
+    <div class="row" style="margin-top:8px">
+      <label for="timing">Bluetooth timing</label>
+      <select id="timing">
+        <option value="steady">Steady (no jitter, small fixed delay)</option>
+        <option value="fast">Lowest delay (plays on arrival, can jitter)</option>
+      </select>
+      <span class="hint" style="margin:0" id="timingInfo"></span>
+    </div>
     <div class="log" id="log"></div>
   </section>
 
@@ -183,6 +191,15 @@
       <div class="tablewrap"><table class="review">
         <thead><tr><th>Pin</th><th>Book</th><th>Rise</th><th>Peak</th><th>Noise</th><th>Threshold</th><th>Level</th><th></th></tr></thead>
         <tbody id="dbgBody"></tbody></table></div>
+      <h2 style="margin-top:14px">Wave</h2>
+      <div class="row" style="margin-bottom:6px">
+        <label for="waveSel">Book</label><select id="waveSel"></select>
+        <span class="hint" style="margin:0">Blue = how far the book's signal rises (ground noise removed). Red dashed = touch threshold, grey = release. Orange band = touched, dot = note played.</span>
+      </div>
+      <canvas id="waveCv" style="width:100%; height:180px; display:block; border:1px solid var(--line); border-radius:8px"></canvas>
+      <h2 style="margin-top:14px">Timing (Bluetooth)</h2>
+      <p class="hint" style="margin:0 0 6px">Each bar is one note: how late it arrived compared with the fastest one. Spread = jitter. With <b>Steady</b> timing every note is played at the green line instead, so they all come out evenly.</p>
+      <canvas id="timeCv" style="width:100%; height:120px; display:block; border:1px solid var(--line); border-radius:8px"></canvas>
       <h2 style="margin-top:14px">Touch log</h2>
       <div class="log" id="dbgLog" style="max-height:14em">Touch a book…</div>
     </details>
@@ -247,31 +264,33 @@ function nearest(midi) {
 }
 
 // ---- voices ----
-function noteOn(midi, velocity, t0) {
+function noteOn(midi, velocity, t0, delay = 0) {  // delay (s): steady-timing wait, 0 = now
   if (!ctx || !samples.length) return;
-  stopVoice(midi, 0.015);                       // retrigger: quick fade of the old one
+  stopVoice(midi, 0.015, delay);                // retrigger: quick fade of the old one
   const s = nearest(midi);
   const src = ctx.createBufferSource();
   src.buffer = s.buffer;
   src.playbackRate.value = Math.pow(2, (midi - s.midi) / 12);
   const g = ctx.createGain();
-  g.gain.value = Math.pow(velocity / 127, 1.6) * 1.2;
+  const level = Math.pow(velocity / 127, 1.6) * 1.2;
+  g.gain.value = level;
   src.connect(g).connect(master);
-  src.start(0, s.offset);                       // now — no scheduling lookahead
-  voices.set(midi, { src, gain: g });
+  if (delay > 0) src.start(ctx.currentTime + delay, s.offset);
+  else src.start(0, s.offset);                  // now — no scheduling lookahead
+  voices.set(midi, { src, gain: g, level });
   if (t0 != null) $("vProc").textContent = (performance.now() - t0).toFixed(1) + " ms";
   count++;
   $("vCount").textContent = count;
   $("vLast").textContent = noteName(midi);
   setKey(midi, true);
 }
-function noteOff(midi) { stopVoice(midi, +$("rel").value / 4); setKey(midi, false); }
-function stopVoice(midi, tau) {
+function noteOff(midi, delay = 0) { stopVoice(midi, +$("rel").value / 4, delay); setKey(midi, false); }
+function stopVoice(midi, tau, delay = 0) {
   const v = voices.get(midi);
   if (!v) return;
-  const now = ctx.currentTime;
+  const now = ctx.currentTime + delay;
   v.gain.gain.cancelScheduledValues(now);
-  v.gain.gain.setValueAtTime(v.gain.gain.value, now);
+  v.gain.gain.setValueAtTime(delay > 0 ? v.level : v.gain.gain.value, now);
   v.gain.gain.setTargetAtTime(0, now, tau);
   v.src.stop(now + tau * 6);
   voices.delete(midi);
@@ -378,12 +397,13 @@ async function bleOpen(dev) {
   askBoard();
 }
 function bleMidiIn(b) {  // BLE-MIDI: header, then (timestamp, [status], data…)…
-  let st = 0;
+  const arrived = performance.now();
+  let st = 0, ts = 0;
   for (let i = 1; i < b.length;) {
-    if (b[i] & 0x80) { i++; if (i < b.length && (b[i] & 0x80)) st = b[i++]; }
+    if (b[i] & 0x80) { ts = ((b[0] & 0x3F) << 7) | (b[i] & 0x7F); i++; if (i < b.length && (b[i] & 0x80)) st = b[i++]; }
     const n = (st & 0xE0) === 0xC0 ? 1 : 2;
     if (!st || i + n > b.length) break;
-    onMidi({ data: new Uint8Array([st, ...b.slice(i, i + n)]) });
+    onMidi({ data: new Uint8Array([st, ...b.slice(i, i + n)]), bleTs: ts, arrived });
     i += n;
   }
 }
@@ -447,8 +467,9 @@ function onMidi(e) {
   const t0 = performance.now();               // play first, everything else after
   const [st, a, b] = e.data, type = st & 0xF0;
   if (st === 0xF0) { onSysex(e.data); return; }
-  if (type === 0x90 && b > 0) noteOn(a, b, t0);
-  else if (type === 0x80 || (type === 0x90 && b === 0)) noteOff(a);
+  const delay = e.bleTs != null && (type === 0x90 || type === 0x80) ? steadyDelay(e.bleTs, e.arrived, type === 0x90 && b > 0) : 0;
+  if (type === 0x90 && b > 0) { noteOn(a, b, t0, delay); waveNote(a); }
+  else if (type === 0x80 || (type === 0x90 && b === 0)) noteOff(a, delay);
   else if (type === 0xB0 && a === 116) log({ 1: "Boards re-baselined",
     4: "Boards are in update mode for 10 min (books won't play). First time? Join the BookPiano-Setup Wi-Fi to enter your Wi-Fi." }[b] || `Board reply ${b}`);
 }
@@ -544,6 +565,7 @@ function onSysex(d) {
     if (boardCfg.numBooks) buildKeyboard(notesOf(boardCfg));
     renderSetup();
     dbgRender();
+    waveOptions();
   } else if (cmd === 0x21) {
     for (let s = 0, i = 5; s < Math.min(d[4], NSENS); s++, i += 9) {
       const f = d[i];
@@ -555,13 +577,18 @@ function onSysex(d) {
     dbgFrame();
     wizFrame();
     updateLive();
+  } else if (cmd === 0x29) {
+    onWave(d);
   } else if (cmd === 0x31) {
     flashSensor(d[4]);
     dbgTouch(d[4]);
   } else if (cmd === 0x23) {
     setTimeout(() => { restState = "done"; renderSetup(); }, 1500);  // the second board finishes a moment later
   } else if (cmd === 0x25) {
-    info = { fw: `${d[4]}.${d[5]}`, childOnline: !!d[6], inSync: !!d[7], ch: d[8], pins: d[9] };
+    info = { fw: `${d[4]}.${d[5]}`, childOnline: !!d[6], inSync: !!d[7], ch: d[8], pins: d[9],
+             bleSlotMs: d.length > 12 ? get14(d, 10) * 1.25 : null };
+    if (infoAskedAt) { linkRtt.push(performance.now() - infoAskedAt); if (linkRtt.length > 20) linkRtt.shift(); infoAskedAt = 0; }
+    renderTiming();
     renderStatus();
   }
 }
@@ -572,7 +599,7 @@ function syncTelemetry() {
   const want = $("setupPanel").open || $("dbgPanel").open;
   clearInterval(keepTimer);
   if (!want) { if (midiOut && sysexOk) midiOut.send([...SYX, 0x20, 0, 0xF7]); return; }
-  const keep = () => { sendSysex([0x20, 1]) && sendSysex([0x24]); };
+  const keep = () => { if (sendSysex([0x20, 1])) { infoAskedAt = performance.now(); sendSysex([0x24]); } };
   keep();
   keepTimer = setInterval(keep, 4000);
 }
@@ -914,6 +941,146 @@ function dbgWrite(s, peak, ms) {
   const line = `${new Date().toLocaleTimeString()}  ${sensorName(s)}  ${k == null ? "(no book)" : `book ${k + 1}`}  peak ${pct(peak)}  = ${(peak / thr).toFixed(1)}× threshold  · ${Math.round(ms)} ms  · ground ${pct(cmLevel[s < PINS ? 0 : 1])}`;
   const el = $("dbgLog");
   el.textContent = line + "\n" + (el.textContent.startsWith("Touch a book") ? "" : el.textContent).split("\n").slice(0, 60).join("\n");
+}
+
+// ---- Bluetooth timing: steady playback from the board's timestamps ----
+// Bluetooth delivers in time slots the phone picks (often 15–50 ms), so notes
+// arrive unevenly late. Every BLE-MIDI note carries the board's millisecond
+// timestamp; "Steady" plays each note at (its true time + a fixed delay) so
+// the delay is constant instead of jumping around.
+let lastTs = null, wrapAdd = 0, infoAskedAt = 0;
+const relWin = [], lateHist = [], linkRtt = [];
+function steadyDelay(ts, arrived, isOn) {
+  if (lastTs != null && ts < lastTs - 4096) wrapAdd += 8192;  // 13-bit ms clock wrapped around
+  else if (lastTs != null && ts > lastTs + 4096) wrapAdd -= 8192;
+  lastTs = ts;
+  const rel = arrived - (ts + wrapAdd);  // transit time + clock offset
+  relWin.push({ t: arrived, rel });
+  while (relWin.length && arrived - relWin[0].t > 20000) relWin.shift();
+  const late = rel - Math.min(...relWin.map(r => r.rel));  // vs the fastest recent delivery
+  if (isOn) { lateHist.push({ t: arrived, late }); if (lateHist.length > 60) lateHist.shift(); renderTiming(); }
+  if ($("timing").value !== "steady") return 0;
+  return Math.max(0, steadyBuffer() - late) / 1000;
+}
+function steadyBuffer() {  // ms: covers the jitter actually seen (90th percentile), at least one slot
+  const ls = lateHist.slice(-30).map(x => x.late).sort((a, b) => a - b);
+  const p90 = ls.length ? ls[Math.floor((ls.length - 1) * 0.9)] : 0;
+  const slot = info && info.bleSlotMs ? info.bleSlotMs : 15;
+  return Math.round(Math.min(60, Math.max(p90, slot) + 2));
+}
+function renderTiming() {
+  if (!bleLink) { $("timingInfo").textContent = "(only matters on Bluetooth)"; return; }
+  const ls = lateHist.slice(-30).map(x => x.late).sort((a, b) => a - b);
+  const jitter = ls.length ? Math.round(ls[Math.floor((ls.length - 1) * 0.9)]) : null;
+  const rtt = linkRtt.length ? [...linkRtt].sort((a, b) => a - b)[Math.floor(linkRtt.length / 2)] : null;
+  $("timingInfo").textContent = [
+    info && info.bleSlotMs ? `phone gave ${info.bleSlotMs} ms slots` : null,
+    jitter != null ? `jitter up to ${jitter} ms` : "play a few notes to measure",
+    $("timing").value === "steady" ? `steady delay ${steadyBuffer()} ms` : null,
+    rtt != null ? `round trip ${Math.round(rtt)} ms` : null].filter(Boolean).join(" · ");
+}
+$("timing").onchange = () => { try { localStorage.setItem("timing", $("timing").value); } catch {} renderTiming(); };
+try { const t = localStorage.getItem("timing"); if (t) $("timing").value = t; } catch {}
+renderTiming();
+
+// ---- wave: one book's signal over time (Debug panel) ----
+const waveData = [], waveMarks = [];
+let waveTimer = null, waveRaf = 0;
+function waveOptions() {
+  const sel = $("waveSel"), keep = sel.value;
+  const c = boardCfg, opts = [];
+  if (c) for (let k = 0; k < c.numBooks; k++) if (c.bookSensor[k] !== NO_SENSOR)
+    opts.push(`<option value="${c.bookSensor[k]}">Book ${k + 1} · ${sensorName(c.bookSensor[k])}</option>`);
+  sel.innerHTML = opts.join("") || `<option value="">No books set up</option>`;
+  if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
+}
+function waveRequest() {
+  if (!$("dbgPanel").open || $("waveSel").value === "") return;
+  sendSysex([0x28, +$("waveSel").value, 1]);
+}
+$("waveSel").onchange = () => { waveData.length = 0; waveMarks.length = 0; waveRequest(); };
+$("dbgPanel").addEventListener("toggle", () => {
+  clearInterval(waveTimer); cancelAnimationFrame(waveRaf);
+  if (!$("dbgPanel").open) { if (midiOut && sysexOk) sendSysex([0x28, 0, 0]); return; }
+  waveOptions(); waveRequest();
+  waveTimer = setInterval(waveRequest, 4000);
+  const loop = () => { drawWave(); drawTiming(); waveRaf = requestAnimationFrame(loop); };
+  loop();
+});
+function onWave(d) {
+  const s = d[4], touched = !!d[5], thr = get14(d, 6), n = d[8], dt = s < PINS ? 5 : 20, now = performance.now();
+  if (String(s) !== $("waveSel").value) return;
+  for (let i = 0; i < n; i++) waveData.push({ t: now - (n - 1 - i) * dt, v: get14(d, 9 + 2 * i) - 8192, thr, touched });
+  while (waveData.length && now - waveData[0].t > 6000) waveData.shift();
+}
+function waveNote(note) {
+  const c = boardCfg, s = +$("waveSel").value;
+  if (!c || isNaN(s)) return;
+  const k = c.bookSensor.slice(0, c.numBooks).indexOf(s);
+  if (k >= 0 && c.bookNote[k] + c.transpose === note) { waveMarks.push(performance.now()); if (waveMarks.length > 50) waveMarks.shift(); }
+}
+const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function prepCanvas(cv) {
+  const dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+  g.font = "11px system-ui, sans-serif";
+  return { g, W, H };
+}
+function drawWave() {
+  const { g, W, H } = prepCanvas($("waveCv"));
+  const now = performance.now(), span = 5000, L = 44, R = 8, T = 8, B = 18, pw = W - L - R, ph = H - T - B;
+  const thr = waveData.length ? waveData[waveData.length - 1].thr : 300;
+  const top = Math.max(thr * 2.2, ...waveData.map(p => p.v)) * 1.1, bot = Math.min(-thr * 0.3, ...waveData.map(p => p.v));
+  const x = t => L + (t - (now - span)) / span * pw, y = v => T + ph - (v - bot) / (top - bot) * ph;
+  g.fillStyle = cssVar("--muted"); g.strokeStyle = cssVar("--line"); g.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const v = bot + (top - bot) * i / 4;
+    g.beginPath(); g.moveTo(L, y(v)); g.lineTo(W - R, y(v)); g.stroke();
+    g.fillText(pct(Math.max(0, v)), 4, y(v) + 4);
+  }
+  for (let sec = 0; sec <= 5; sec++) g.fillText(`-${5 - sec}s`, x(now - span + sec * 1000) - 8, H - 4);
+  g.fillStyle = "rgba(224,83,47,0.15)";  // touched bands
+  let st = null;
+  waveData.forEach((p, i) => {
+    if (p.touched && st == null) st = p.t;
+    if ((!p.touched || i === waveData.length - 1) && st != null) { g.fillRect(x(st), T, x(p.t) - x(st), ph); st = null; }
+  });
+  const hline = (v, c, dash) => { g.strokeStyle = c; g.setLineDash(dash); g.beginPath(); g.moveTo(L, y(v)); g.lineTo(W - R, y(v)); g.stroke(); g.setLineDash([]); };
+  hline(thr, cssVar("--hit"), [6, 4]);
+  hline(thr / 2, cssVar("--muted"), [3, 4]);
+  g.strokeStyle = cssVar("--accent"); g.lineWidth = 2; g.beginPath();
+  waveData.forEach((p, i) => i ? g.lineTo(x(p.t), y(p.v)) : g.moveTo(x(p.t), y(p.v)));
+  g.stroke();
+  g.fillStyle = cssVar("--hit");
+  for (const t of waveMarks) if (now - t < span) { g.beginPath(); g.arc(x(t), T + 6, 4, 0, 7); g.fill(); }
+  if (!waveData.length) { g.fillStyle = cssVar("--muted"); g.fillText("Waiting for data… (needs board firmware 2.4)", L + 8, T + 20); }
+}
+function drawTiming() {
+  const { g, W, H } = prepCanvas($("timeCv"));
+  const L = 44, R = 8, T = 8, B = 16, pw = W - L - R, ph = H - T - B;
+  const pts = lateHist.slice(-40), buf = steadyBuffer();
+  const top = Math.max(buf * 1.3, 20, ...pts.map(p => p.late));
+  const y = v => T + ph - v / top * ph;
+  g.fillStyle = cssVar("--muted"); g.strokeStyle = cssVar("--line"); g.lineWidth = 1;
+  for (let i = 0; i <= 3; i++) {
+    const v = top * i / 3;
+    g.beginPath(); g.moveTo(L, y(v)); g.lineTo(W - R, y(v)); g.stroke();
+    g.fillText(Math.round(v) + " ms", 2, y(v) + 4);
+  }
+  const bw = pw / 40;
+  g.fillStyle = cssVar("--accent");
+  pts.forEach((p, i) => g.fillRect(L + i * bw + 1, y(p.late), Math.max(1, bw - 2), ph + T - y(p.late)));
+  if ($("timing").value === "steady") {
+    g.strokeStyle = cssVar("--good"); g.lineWidth = 2;
+    g.beginPath(); g.moveTo(L, y(buf)); g.lineTo(W - R, y(buf)); g.stroke();
+  }
+  if (!pts.length) {
+    g.fillStyle = cssVar("--muted");
+    g.fillText(bleLink ? "Play some notes over Bluetooth…" : "Connect over Bluetooth to see timing", L + 8, T + 20);
+  }
 }
 
 // ---- misc ----
