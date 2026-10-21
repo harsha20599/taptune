@@ -147,6 +147,12 @@
     <details id="setupPanel">
       <summary>Setup: books, notes &amp; sensitivity</summary>
       <div class="su-status" id="suStatus">Connect the board to set up.</div>
+      <div class="row" id="suRadio" style="margin-top:8px; display:none">
+        <label for="suCh">Radio channel between the boards</label>
+        <select id="suCh"></select>
+        <button id="suChApply">Change</button>
+        <span class="hint" style="margin:0">Pick one far from your home Wi-Fi's channel (e.g. Wi-Fi on 1–6 → use 11).</span>
+      </div>
       <div class="steps" id="suSteps">
         <button data-step="1">1 · Rest</button>
         <button data-step="2">2 · Find books</button>
@@ -413,7 +419,17 @@ $("setupPanel").addEventListener("toggle", () => {
 });
 $("suSteps").addEventListener("click", e => { const s = +e.target.dataset.step; if (s) { step = s; renderSetup(); } });
 
+$("suCh").innerHTML = Array.from({ length: 13 }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join("");
+$("suChApply").onclick = () => {
+  const ch = +$("suCh").value;
+  if (!info || ch === info.ch) return;
+  if (!confirm(`Move both boards to radio channel ${ch}? The main board restarts (2 s); the second board finds it by itself within a few seconds.`)) return;
+  if (sendSysex([0x26, ch])) $("suMsg").textContent = `Main board restarting on channel ${ch}…`;
+};
 function renderStatus() {
+  const canSetCh = info && parseFloat(info.fw) >= 2.1;
+  $("suRadio").style.display = canSetCh ? "" : "none";
+  if (canSetCh && document.activeElement !== $("suCh")) $("suCh").value = info.ch;
   const second = info ? (info.childOnline ? `online${info.inSync ? "" : " (syncing…)"}` : "offline") : "?";
   $("suStatus").textContent = boardCfg
     ? `Main board ✓ · Second board: ${second}${info ? ` · radio channel ${info.ch} · firmware ${info.fw}` : ""} · ${boardCfg.numBooks} books`
