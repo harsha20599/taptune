@@ -96,6 +96,12 @@
   .notegrid span { flex: 1; color: var(--muted); }
   .notegrid div.hit { background: var(--hit); border-color: var(--hit); }
   .notegrid div.hit span { color: #fff; }
+  .pinrow { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin: 6px 0; }
+  .pinrow > span { width: 62px; color: var(--muted); font-size: 13px; }
+  .pinbtn { min-width: 34px; padding: 6px 0; text-align: center; font-variant-numeric: tabular-nums; }
+  .pinbtn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .pinbtn.hit { outline: 3px solid var(--hit); outline-offset: 1px; }
+  .pinbtn.off { opacity: .45; }
   footer { color: var(--muted); font-size: 12px; margin-top: 18px; }
   footer a { color: inherit; }
   .warn { color: var(--bad); }
@@ -675,11 +681,23 @@ function renderFind() {
         <button id="suBack" ${wiz.k ? "" : "disabled"}>← Back</button><button id="suFinish">Finish early</button></div>` : ""}
       ${wiz && wiz.done ? `<div class="row" style="margin-top:10px"><button class="primary" id="suNext3">Next: notes →</button></div>` : ""}
     </div>
-    <div class="chips">${chips}</div>`;
+    <div class="chips">${chips}</div>
+    <h2 style="margin-top:18px">Or choose pins by hand</h2>
+    <p class="hint" style="margin-top:0">Blue = this pin has a book. Tap a pin to add or remove its book (new books get the next note up), then go to 4 · Review &amp; save. A pin outlined red is being touched right now.</p>
+    ${pinGrid()}
+    <p class="hint">${draft.numBooks} book${draft.numBooks === 1 ? "" : "s"}${boardCfg && JSON.stringify(encodeCfg(draft)) !== JSON.stringify(encodeCfg(boardCfg)) ? " · not saved yet" : ""}</p>`;
+  $("suPins").onclick = e => { const s = e.target.dataset.s; if (s != null) togglePin(+s); };
   $("suFindStart").onclick = () => {
     const nb = Math.max(1, Math.min(28, +$("suN").value || 24));
     found = {};
     wiz = { numBooks: nb, k: 0, sensor: null, taps: [], inTap: false, cross: {}, ref: 0, cur: 0, note: "" };
+    // Firmware 2.6+ only listens on pins that already have books; to find new
+    // ones, ask both boards to listen on every pin (they restart for a moment).
+    const listening = tele.slice(0, PINS).every(t => t.online);
+    if (info && parseFloat(info.fw) >= 2.6 && !listening) {
+      sendSysex([0x2A, 1]);
+      wiz.note = "the board is restarting to listen on every pin, start touching in a few seconds";
+    }
     renderSetup();
   };
   if (!wiz) return;
@@ -777,6 +795,32 @@ function applySuggested() {
   }
 }
 
+
+// ---- pins by hand ----
+function pinGrid() {
+  const used = new Set(draft.bookSensor.slice(0, draft.numBooks));
+  const row = (label, base) => `<div class="pinrow"><span>${label}</span>${Array.from({ length: PINS }, (_, i) => {
+    const s = base + i, t = tele[s];
+    return `<button class="pinbtn${used.has(s) ? " on" : ""}${t && t.touched ? " hit" : ""}${t && !t.online && !used.has(s) ? " off" : ""}" id="pin${s}" data-s="${s}" title="${sensorName(s)}">${i + 1}</button>`;
+  }).join("")}</div>`;
+  return `<div id="suPins">${row("Main", 0)}${row("Second", PINS)}</div>`;
+}
+function togglePin(s) {
+  const n = draft.numBooks, k = draft.bookSensor.slice(0, n).indexOf(s);
+  if (k >= 0) {  // remove that book, close the gap
+    draft.bookSensor.splice(k, 1); draft.bookSensor.push(NO_SENSOR);
+    draft.bookNote.splice(k, 1); draft.bookNote.push(60);
+    draft.numBooks = n - 1;
+  } else if (n < NSENS) {
+    const next = n ? Math.min(127, Math.max(...draft.bookNote.slice(0, n)) + 1) : 60;
+    draft.bookSensor[n] = s;
+    draft.bookNote[n] = next;
+    draft.numBooks = n + 1;
+    noteOn(next + draft.transpose, 100, null); setTimeout(() => noteOff(next + draft.transpose), 300);
+  }
+  renderSetup();
+}
+
 // ---- step 3: notes ----
 const noteOptions = (() => { let s = ""; for (let m = 24; m <= 108; m++) s += `<option value="${m}">${noteName(m)}</option>`; return s; })();
 const SCALES = { chromatic: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], white: [0, 2, 4, 5, 7, 9, 11],
@@ -863,6 +907,10 @@ function renderReview() {
 // live bars + touch highlight (telemetry, 20 per second)
 function updateLive() {
   if (!$("setupPanel").open || !draft) return;
+  if (step === 2) for (let s = 0; s < NSENS; s++) {
+    const b = $("pin" + s);
+    if (b) b.classList.toggle("hit", tele[s].touched || (tele[s].online && tele[s].peak > Math.max(tele[s].thr, 100)));
+  }
   if (step === 4) for (let k = 0; k < draft.numBooks; k++) {
     const bar = $("bar" + k), s = draft.bookSensor[k];
     if (!bar || s === NO_SENSOR) continue;
