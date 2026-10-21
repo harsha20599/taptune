@@ -313,6 +313,7 @@ async function startMidi() {
     const name = (inputs.find(i => /book piano/i.test(i.name)) || inputs[0] || {}).name;
     setMidi(inputs.length > 0, name || "No MIDI device: plug in the board");
     midiPorts = { ins: inNames, outs: outputs.map(o => o.name) };
+    if (!inputs.length) { boardAnswered = false; askTries = 0; }  // unplugged: ask again when it comes back
     if (midiOut) askBoard();
     renderConn();
   };
@@ -438,7 +439,10 @@ const notesOf = c => c.bookNote.slice(0, c.numBooks).map(n => Math.max(0, Math.m
 function onSysex(d) {
   if (d[1] !== 0x7D || d[2] !== 0x42) return;
   const cmd = d[3];
-  if (!boardAnswered && (cmd === 0x11 || cmd === 0x25)) { boardAnswered = true; clearTimeout(askTimer); renderConn(); }
+  if (!boardAnswered && (cmd === 0x11 || cmd === 0x25)) {
+    boardAnswered = true; clearTimeout(askTimer); renderConn();
+    syncTelemetry();  // Debug/Setup already open when the board was plugged in: start live data without a tap
+  }
   if (cmd === 0x11) {
     boardCfg = parseCfg(d.slice(4, d.length - 1));
     const wasSaving = draft && draft.saving;
