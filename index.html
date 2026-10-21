@@ -115,6 +115,11 @@
     <span class="pill"><span class="dot" id="midiDot"></span><span id="midiText">No MIDI device</span></span>
   </header>
 
+  <section class="panel" id="connBox" style="border-color:var(--warn)">
+    <div class="row"><span id="connMsg" style="flex:1; font-size:14px">Not started.</span>
+      <button id="connRetry" style="display:none">Try again</button></div>
+  </section>
+
   <section class="panel stats">
     <div class="stat"><div class="label">Audio output delay</div><div class="value" id="vOut">—</div><div class="sub" id="vOutSub"></div></div>
     <div class="stat"><div class="label">MIDI → sound start</div><div class="value" id="vProc">—</div><div class="sub">time inside this page, last note</div></div>
@@ -161,6 +166,24 @@
       </div>
       <div id="suBody"></div>
       <p class="hint" id="suMsg"></p>
+    </details>
+  </section>
+
+  <section class="panel">
+    <details id="dbgPanel">
+      <summary>Debug: live sensors</summary>
+      <p class="hint">Every touch pin on both boards, live. <b>Rise</b> = how far the pin is above resting right now; <b>peak</b> = highest in the last moment, after removing ground noise; it has to cross the <b>threshold</b> to play. <b>Ground noise</b> = how much all pins rose together (e.g. when you touch the phone); the boards subtract it.</p>
+      <div class="row" style="margin:10px 0">
+        <span class="chip" id="dbgCmMain">Main ground noise —</span>
+        <span class="chip" id="dbgCmSecond">Second ground noise —</span>
+        <label><input type="checkbox" id="dbgAll"> show pins without a book</label>
+        <button id="dbgPause">Pause</button><button id="dbgClear">Clear log</button>
+      </div>
+      <div class="tablewrap"><table class="review">
+        <thead><tr><th>Pin</th><th>Book</th><th>Rise</th><th>Peak</th><th>Noise</th><th>Threshold</th><th>Level</th><th></th></tr></thead>
+        <tbody id="dbgBody"></tbody></table></div>
+      <h2 style="margin-top:14px">Touch log</h2>
+      <div class="log" id="dbgLog" style="max-height:14em">Touch a book…</div>
     </details>
   </section>
 
@@ -275,20 +298,54 @@ function showLatency() {
 // ---- MIDI ----
 async function startMidi() {
   if (!navigator.requestMIDIAccess) { setMidi(false, "This browser has no Web MIDI. Use Chrome or Edge"); return; }
-  // SysEx carries the books→notes settings. If the browser refuses it, playing still works.
+  // SysEx carries settings, calibration and debug data. If the browser refuses
+  // it, playing still works but Setup/Debug can't talk to the board.
   let access;
   try { access = await navigator.requestMIDIAccess({ sysex: true }); sysexOk = true; }
   catch { access = await navigator.requestMIDIAccess({ sysex: false }); sysexOk = false; }
   const hook = () => {
-    let names = [];
-    for (const input of access.inputs.values()) { input.onmidimessage = onMidi; names.push(input.name); }
-    midiOut = [...access.outputs.values()].find(o => /book piano/i.test(o.name)) || null;
-    const book = names.find(n => /book piano/i.test(n));
-    setMidi(names.length > 0, book || names[0] || "No MIDI device: plug in the board");
-    if (midiOut && sysexOk && !boardCfg) midiOut.send([...SYX, 0x10, 0xF7]);  // fetch the board's setup
+    const inputs = [...access.inputs.values()], outputs = [...access.outputs.values()];
+    inputs.forEach(i => { i.onmidimessage = onMidi; });
+    // The board may be listed as "Book Piano", or (Android) under its USB name.
+    // Prefer the name; otherwise an output named like one of the inputs; otherwise the only/first one.
+    const inNames = inputs.map(i => i.name);
+    midiOut = outputs.find(o => /book piano/i.test(o.name)) || outputs.find(o => inNames.includes(o.name)) || outputs[0] || null;
+    const name = (inputs.find(i => /book piano/i.test(i.name)) || inputs[0] || {}).name;
+    setMidi(inputs.length > 0, name || "No MIDI device: plug in the board");
+    midiPorts = { ins: inNames, outs: outputs.map(o => o.name) };
+    if (midiOut) askBoard();
+    renderConn();
   };
   access.onstatechange = hook;
   hook();
+}
+
+// Ask the board for its setup until it answers; explain what's wrong if it doesn't.
+let midiPorts = { ins: [], outs: [] }, askTries = 0, askTimer = null, boardAnswered = false;
+function askBoard() {
+  clearTimeout(askTimer);
+  if (!sysexOk || !midiOut || boardAnswered) { renderConn(); return; }
+  midiOut.send([...SYX, 0x24, 0xF7]);
+  midiOut.send([...SYX, 0x10, 0xF7]);
+  askTries++;
+  askTimer = setTimeout(() => { if (!boardAnswered && askTries < 6) askBoard(); else renderConn(); }, 1500);
+  renderConn();
+}
+function connProblem() {
+  if (!midiPorts.ins.length) return "No MIDI device found. Plug the main board's USB port into this phone/computer.";
+  if (!sysexOk) return "Notes work, but this browser blocked MIDI settings access, so Setup and Debug can't talk to the board. " +
+    "Fix: tap the icon left of the address bar → Permissions (or Site settings) → MIDI devices / “Control and reprogram MIDI devices” → Allow, then reload.";
+  if (!midiPorts.outs.length) return "The board is sending notes, but no MIDI output to it was found, so settings can't be sent. Unplug and replug the board, then reload.";
+  if (!boardAnswered && askTries >= 6) return `The board plays notes but doesn't answer settings requests. It may need a firmware update. (Ports seen: in “${midiPorts.ins.join(", ")}”, out “${midiPorts.outs.join(", ")}”)`;
+  if (!boardAnswered) return "Contacting the board…";
+  return "";
+}
+function renderConn() {
+  const p = connProblem();
+  $("connMsg").textContent = p;
+  $("connBox").style.display = p ? "" : "none";
+  $("connRetry").style.display = p && !p.startsWith("Contacting") ? "" : "none";
+  if (typeof renderStatus === "function" && $("suStatus")) renderStatus();
 }
 function setMidi(ok, text) { $("midiDot").classList.toggle("on", ok); $("midiText").textContent = text; }
 
@@ -381,6 +438,7 @@ const notesOf = c => c.bookNote.slice(0, c.numBooks).map(n => Math.max(0, Math.m
 function onSysex(d) {
   if (d[1] !== 0x7D || d[2] !== 0x42) return;
   const cmd = d[3];
+  if (!boardAnswered && (cmd === 0x11 || cmd === 0x25)) { boardAnswered = true; clearTimeout(askTimer); renderConn(); }
   if (cmd === 0x11) {
     boardCfg = parseCfg(d.slice(4, d.length - 1));
     const wasSaving = draft && draft.saving;
@@ -388,16 +446,21 @@ function onSysex(d) {
     $("suMsg").textContent = wasSaving ? "Saved to the board ✓" : "";
     if (boardCfg.numBooks) buildKeyboard(notesOf(boardCfg));
     renderSetup();
+    dbgRender();
   } else if (cmd === 0x21) {
     for (let s = 0, i = 5; s < Math.min(d[4], NSENS); s++, i += 9) {
       const f = d[i];
       tele[s] = { online: !!(f & 1), touched: !!(f & 2), used: !!(f & 4), now: get14(d, i + 1) - 8192,
                   peak: get14(d, i + 3), noise: get14(d, i + 5), thr: get14(d, i + 7) };
     }
+    const x = 5 + 9 * Math.min(d[4], NSENS);
+    if (d.length >= x + 5) { cmLevel = [get14(d, x), get14(d, x + 2)]; }
+    dbgFrame();
     wizFrame();
     updateLive();
   } else if (cmd === 0x31) {
     flashSensor(d[4]);
+    dbgTouch(d[4]);
   } else if (cmd === 0x23) {
     setTimeout(() => { restState = "done"; renderSetup(); }, 1500);  // the second board finishes a moment later
   } else if (cmd === 0x25) {
@@ -407,15 +470,18 @@ function onSysex(d) {
 }
 
 // ---- panel open/close: live sensor data only while it's open ----
-$("setupPanel").addEventListener("toggle", () => {
-  const open = $("setupPanel").open;
+// Live sensor data (telemetry) runs while Setup or Debug is open.
+function syncTelemetry() {
+  const want = $("setupPanel").open || $("dbgPanel").open;
   clearInterval(keepTimer);
-  if (!open) { sendSysex([0x20, 0]); return; }
+  if (!want) { if (midiOut && sysexOk) midiOut.send([...SYX, 0x20, 0, 0xF7]); return; }
   const keep = () => { sendSysex([0x20, 1]) && sendSysex([0x24]); };
   keep();
   keepTimer = setInterval(keep, 4000);
-  sendSysex([0x10]);
-  renderSetup();
+}
+$("setupPanel").addEventListener("toggle", () => {
+  syncTelemetry();
+  if ($("setupPanel").open) { sendSysex([0x10]); renderSetup(); }
 });
 $("suSteps").addEventListener("click", e => { const s = +e.target.dataset.step; if (s) { step = s; renderSetup(); } });
 
@@ -694,6 +760,65 @@ function flashSensor(s) {
   el.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
+// ---- debug: live sensors + touch log ----
+let cmLevel = [0, 0], dbgPaused = false, dbgLast = 0;
+const dbgOpen = {};  // sensor → { t, peak } while a touch is being logged
+$("dbgPanel").addEventListener("toggle", () => { syncTelemetry(); if ($("dbgPanel").open && !boardCfg) sendSysex([0x10]); dbgRender(); });
+$("dbgAll").onchange = () => dbgRender();
+$("dbgPause").onclick = () => { dbgPaused = !dbgPaused; $("dbgPause").textContent = dbgPaused ? "Resume" : "Pause"; };
+$("dbgClear").onclick = () => { $("dbgLog").textContent = ""; };
+const bookOf = s => { const c = boardCfg; if (!c) return null; const k = c.bookSensor.slice(0, c.numBooks).indexOf(s); return k < 0 ? null : k; };
+function dbgRender() {
+  if (!$("dbgPanel").open) return;
+  const all = $("dbgAll").checked, rows = [];
+  for (let s = 0; s < NSENS; s++) {
+    const k = bookOf(s);
+    if (!all && k == null) continue;
+    rows.push(`<tr id="dg${s}"><td>${sensorName(s)}</td><td>${k == null ? "–" : `${k + 1} · ${noteName(boardCfg.bookNote[k] + boardCfg.transpose)}`}</td>
+      <td id="dgr${s}"></td><td id="dgp${s}"></td><td id="dgn${s}"></td><td id="dgt${s}"></td>
+      <td><div class="bar" id="dgb${s}"><i></i><b></b></div></td><td id="dgs${s}"></td></tr>`);
+  }
+  $("dbgBody").innerHTML = rows.join("") || `<tr><td colspan="8" class="hint">No books set up yet. Tick “show pins without a book”.</td></tr>`;
+  dbgFrame(true);
+}
+function dbgFrame(force) {
+  if (!$("dbgPanel").open || (dbgPaused && !force)) return;
+  const now = performance.now();
+  if (!force && now - dbgLast < 100) return;  // 10 updates a second is plenty to read
+  dbgLast = now;
+  const cm = (el, v, who) => { el.textContent = `${who} ground noise ${pct(v)}`; el.className = "chip " + (v > 300 ? "badc" : v > 100 ? "warnc" : "good"); };
+  cm($("dbgCmMain"), cmLevel[0], "Main");
+  cm($("dbgCmSecond"), cmLevel[1], "Second");
+  for (let s = 0; s < NSENS; s++) {
+    const row = $("dg" + s);
+    if (!row) continue;
+    const t = tele[s];
+    if (!t.online) { $("dgs" + s).textContent = "offline"; continue; }
+    $("dgr" + s).textContent = pct(Math.max(0, t.now));
+    $("dgp" + s).textContent = pct(t.peak);
+    $("dgn" + s).textContent = pct(t.noise);
+    $("dgt" + s).textContent = pct(t.thr);
+    const bar = $("dgb" + s);
+    bar.firstChild.style.width = Math.min(100, t.peak / (2 * Math.max(t.thr, 1)) * 100) + "%";
+    bar.classList.toggle("touch", t.touched);
+    row.classList.toggle("hit", t.touched);
+    $("dgs" + s).textContent = t.touched ? "TOUCH" : "";
+  }
+  // finish log lines for touches that ended: record their strongest peak
+  for (const [s, o] of Object.entries(dbgOpen)) {
+    o.peak = Math.max(o.peak, tele[s].peak);
+    if (!tele[s].touched && now - o.t > 120) { dbgWrite(+s, o.peak, now - o.t); delete dbgOpen[s]; }
+  }
+}
+function dbgTouch(s) { if ($("dbgPanel").open) dbgOpen[s] = { t: performance.now(), peak: tele[s] ? tele[s].peak : 0 }; }
+function dbgWrite(s, peak, ms) {
+  if (dbgPaused) return;
+  const k = bookOf(s), thr = tele[s].thr || 1;
+  const line = `${new Date().toLocaleTimeString()}  ${sensorName(s)}  ${k == null ? "(no book)" : `book ${k + 1}`}  peak ${pct(peak)}  = ${(peak / thr).toFixed(1)}× threshold  · ${Math.round(ms)} ms  · ground ${pct(cmLevel[s < PINS ? 0 : 1])}`;
+  const el = $("dbgLog");
+  el.textContent = line + "\n" + (el.textContent.startsWith("Touch a book") ? "" : el.textContent).split("\n").slice(0, 60).join("\n");
+}
+
 // ---- misc ----
 $("vol").oninput = () => { if (master) master.gain.value = +$("vol").value; };
 const syncRel = () => $("relOut").textContent = (+$("rel").value).toFixed(2) + " s";
@@ -703,6 +828,7 @@ function log(t) { $("log").textContent = new Date().toLocaleTimeString() + "  " 
 // Offline support (installable app). Only on https or localhost.
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 
+$("connRetry").onclick = () => { askTries = 0; boardAnswered = false; startMidi().catch(err => setMidi(false, "MIDI blocked: " + err.message)); };
 $("btnStart").onclick = async () => {
   $("btnStart").disabled = true;
   try {
