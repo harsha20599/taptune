@@ -200,9 +200,17 @@
       <h2 style="margin-top:14px">Wave</h2>
       <div class="row" style="margin-bottom:6px">
         <label for="waveSel">Book</label><select id="waveSel"></select>
-        <span class="hint" style="margin:0">Blue = how far the book's signal rises (ground noise removed). Red dashed = touch threshold, grey = release. Orange band = touched, dot = note played.</span>
+        <span class="hint" style="margin:0">Blue = how far the book's signal rises (ground noise removed). Red dashed = touch threshold (drag it), grey = release. Orange band = touched, dot = note played.</span>
       </div>
-      <canvas id="waveCv" style="width:100%; height:180px; display:block; border:1px solid var(--line); border-radius:8px"></canvas>
+      <canvas id="waveCv" style="width:100%; height:180px; display:block; border:1px solid var(--line); border-radius:8px; touch-action:none; cursor:ns-resize"></canvas>
+      <div class="row" style="margin-top:8px">
+        <button id="tuneLess" title="Needs a firmer touch: hovering stops counting">Less sensitive</button>
+        <button id="tuneMore" title="Reacts to lighter touches">More sensitive</button>
+        <button id="tuneSuggest" style="display:none">Use suggested</button>
+        <span class="chip" id="tuneVal">touch at —</span>
+        <span class="hint" style="margin:0">or drag the red line on the graph</span>
+      </div>
+      <div class="hint" id="tuneInfo" style="margin-top:6px"></div>
       <h2 style="margin-top:14px">Timing (Bluetooth)</h2>
       <p class="hint" style="margin:0 0 6px">Each bar is one note: how late it arrived compared with the fastest one. Spread = jitter. With <b>Steady</b> timing every note is played at the green line instead, so they all come out evenly.</p>
       <canvas id="timeCv" style="width:100%; height:120px; display:block; border:1px solid var(--line); border-radius:8px"></canvas>
@@ -821,6 +829,76 @@ function togglePin(s) {
   renderSetup();
 }
 
+
+// ---- sensitivity nudge (Wave): drag the red line or use the buttons ----
+// Changes one book's threshold only, live: no re-baseline, no recalibration.
+// Sent to the board 0.3 s after you stop; the board saves it.
+const tune = { value: null, drag: false, map: null, timer: 0, suggest: null };
+function tuneSensor() { const s = +$("waveSel").value; return isNaN(s) || $("waveSel").value === "" ? null : s; }
+function tuneSet(v) {
+  const s = tuneSensor();
+  if (s == null || !boardCfg) return;
+  tune.value = Math.round(Math.min(3000, Math.max(50, v)));
+  clearTimeout(tune.timer);
+  tune.timer = setTimeout(() => {
+    const c = clone(boardCfg);
+    c.thr[s] = tune.value;
+    boardCfg = c;
+    if (draft && !draft.saving) draft.thr[s] = tune.value;
+    sendSysex(encodeCfg(c));
+    setTimeout(() => { tune.value = null; }, 600);  // board's own value takes over once it confirms
+  }, 300);
+}
+$("tuneLess").onclick = () => { const s = tuneSensor(); if (s != null && boardCfg) tuneSet((tune.value ?? boardCfg.thr[s]) * 1.1 + 5); };
+$("tuneSuggest").onclick = () => { if (tune.suggest) tuneSet(tune.suggest); };
+$("tuneMore").onclick = () => { const s = tuneSensor(); if (s != null && boardCfg) tuneSet((tune.value ?? boardCfg.thr[s]) / 1.1 - 5); };
+const waveVal = e => {
+  const r = $("waveCv").getBoundingClientRect(), m = tune.map;
+  return m ? m.bot + (m.T + m.ph - (e.clientY - r.top)) / m.ph * (m.top - m.bot) : null;
+};
+$("waveCv").addEventListener("pointerdown", e => {
+  const s = tuneSensor();
+  if (s == null || !boardCfg || !tune.map) return;
+  tune.drag = true;
+  $("waveCv").setPointerCapture(e.pointerId);
+  tuneSet(waveVal(e));
+});
+$("waveCv").addEventListener("pointermove", e => { if (tune.drag) tuneSet(waveVal(e)); });
+const tuneEnd = () => { tune.drag = false; };
+$("waveCv").addEventListener("pointerup", tuneEnd);
+$("waveCv").addEventListener("pointercancel", tuneEnd);
+
+// What the last 5 s say: how high real taps went vs how high the signal got
+// without a touch (hovering, a hand nearby) — the line belongs in between.
+function tuneReadout(boardThr) {
+  const s = tuneSensor();
+  if (s == null) { $("tuneVal").textContent = "touch at —"; $("tuneInfo").textContent = ""; return; }
+  const set = tune.value != null ? tune.value : boardCfg ? boardCfg.thr[s] : boardThr;
+  const floor = tele[s] ? 4 * tele[s].noise : 0;
+  $("tuneVal").textContent = `touch at ${pct(Math.max(set, floor))}`;
+  const touchTimes = waveData.filter(p => p.touched).map(p => p.t);
+  let tap = 0, hover = 0, j = 0;
+  for (const p of waveData) {
+    if (p.touched) { tap = Math.max(tap, p.v); continue; }
+    while (j < touchTimes.length - 1 && touchTimes[j + 1] < p.t) j++;
+    const near = touchTimes.length && (Math.abs(touchTimes[j] - p.t) < 150 || (touchTimes[j + 1] && Math.abs(touchTimes[j + 1] - p.t) < 150));
+    if (!near) hover = Math.max(hover, p.v);
+  }
+  const parts = [];
+  if (tap) parts.push(`your taps reached ${pct(tap)}`);
+  if (hover > 0) parts.push(`without a touch it reached ${pct(hover)}`);
+  if (tap && hover > 0) {
+    const mid = Math.round((tap * 0.6 + hover * 1.4) / 2);
+    const good = hover * 1.15 < tap * 0.7;
+    tune.suggest = good ? mid : null;
+    parts.push(good ? `a good spot: about ${pct(mid)}` : "taps and hovering are close: try a firmer tap, or a bigger foil in that book");
+  }
+  if (!(tap && hover > 0)) tune.suggest = null;
+  $("tuneSuggest").style.display = tune.suggest ? "" : "none";
+  if (set < floor) parts.push(`can't go below ${pct(floor)} (4× this book's noise)`);
+  $("tuneInfo").textContent = parts.join(" · ") || "Tap the book a few times and hover over it to see where the line should go.";
+}
+
 // ---- step 3: notes ----
 const noteOptions = (() => { let s = ""; for (let m = 24; m <= 108; m++) s += `<option value="${m}">${noteName(m)}</option>`; return s; })();
 const SCALES = { chromatic: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], white: [0, 2, 4, 5, 7, 9, 11],
@@ -1052,7 +1130,7 @@ function waveRequest() {
   if (!$("dbgPanel").open || $("waveSel").value === "") return;
   sendSysex([0x28, +$("waveSel").value, 1]);
 }
-$("waveSel").onchange = () => { waveData.length = 0; waveMarks.length = 0; waveRequest(); };
+$("waveSel").onchange = () => { waveData.length = 0; waveMarks.length = 0; tune.value = null; waveRequest(); };
 $("dbgPanel").addEventListener("toggle", () => {
   clearInterval(waveTimer); cancelAnimationFrame(waveRaf);
   if (!$("dbgPanel").open) { if (midiOut && sysexOk) sendSysex([0x28, 0, 0]); return; }
@@ -1086,8 +1164,12 @@ function prepCanvas(cv) {
 function drawWave() {
   const { g, W, H } = prepCanvas($("waveCv"));
   const now = performance.now(), span = 5000, L = 44, R = 8, T = 8, B = 18, pw = W - L - R, ph = H - T - B;
-  const thr = waveData.length ? waveData[waveData.length - 1].thr : 300;
-  const top = Math.max(thr * 2.2, ...waveData.map(p => p.v)) * 1.1, bot = Math.min(-thr * 0.3, ...waveData.map(p => p.v));
+  const boardThr = waveData.length ? waveData[waveData.length - 1].thr : 300;
+  const thr = tune.value != null ? tune.value : boardThr;  // a nudge in progress shows right away
+  let top = Math.max(thr * 2.2, ...waveData.map(p => p.v)) * 1.1, bot = Math.min(-thr * 0.3, ...waveData.map(p => p.v));
+  if (tune.drag && tune.map) ({ top, bot } = tune.map);  // keep the scale still while dragging
+  tune.map = { T, ph, top, bot };
+  tuneReadout(boardThr);
   const x = t => L + (t - (now - span)) / span * pw, y = v => T + ph - (v - bot) / (top - bot) * ph;
   g.fillStyle = cssVar("--muted"); g.strokeStyle = cssVar("--line"); g.lineWidth = 1;
   for (let i = 0; i <= 4; i++) {
