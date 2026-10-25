@@ -891,7 +891,7 @@ function renderFind() {
 }
 function calStartLoop() {
   clearInterval(calKeep); cancelAnimationFrame(calRaf);
-  calKeep = setInterval(() => { if (wiz && !wiz.done && cal && cal.s != null) sendSysex([0x28, cal.s, 1]); }, 3000);
+  calKeep = setInterval(() => { if (calOwnsWave()) sendSysex([0x28, cal.s, 1]); }, 3000);
   const loop = () => { if (step === 2 && wiz && !wiz.done && $("calCv")) drawCal(); calRaf = requestAnimationFrame(loop); };
   loop();
 }
@@ -916,7 +916,7 @@ function drawCal() {
     g.fillStyle = cssVar("--hit"); g.fillText("touch line (drag)", W - R - 100, y(cal.thr) - 4);
   }
   g.strokeStyle = cssVar("--accent"); g.lineWidth = 2; g.beginPath();
-  d.forEach((p, i) => i ? g.lineTo(x(p.t), y(p.v)) : g.moveTo(x(p.t), y(p.v)));
+  d.forEach((p, i) => i && p.t - d[i - 1].t < 150 ? g.lineTo(x(p.t), y(p.v)) : g.moveTo(x(p.t), y(p.v)));
   g.stroke();
   g.fillStyle = cssVar("--hit");
   for (const t of cal.marks) if (now - t < span) { g.beginPath(); g.arc(x(t), T + 6, 4, 0, 7); g.fill(); }
@@ -1332,8 +1332,11 @@ function waveOptions() {
   sel.innerHTML = opts.join("") || `<option value="">No books set up</option>`;
   if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
 }
+// The board streams the fast wave for ONE pin at a time. While Setup -> Find
+// books is calibrating a pin it owns the stream; Debug's wave waits.
+function calOwnsWave() { return $("setupPanel").open && step === 2 && wiz && !wiz.done && cal && cal.s != null; }
 function waveRequest() {
-  if (!$("dbgPanel").open || $("waveSel").value === "") return;
+  if (!$("dbgPanel").open || $("waveSel").value === "" || calOwnsWave()) return;
   sendSysex([0x28, +$("waveSel").value, 1]);
 }
 $("waveSel").onchange = () => { waveData.length = 0; waveMarks.length = 0; tune.value = null; waveRequest(); };
@@ -1396,11 +1399,12 @@ function drawWave() {
   hline(thr, cssVar("--hit"), [6, 4]);
   hline(thr / 2, cssVar("--muted"), [3, 4]);
   g.strokeStyle = cssVar("--accent"); g.lineWidth = 2; g.beginPath();
-  waveData.forEach((p, i) => i ? g.lineTo(x(p.t), y(p.v)) : g.moveTo(x(p.t), y(p.v)));
+  waveData.forEach((p, i) => i && p.t - waveData[i - 1].t < 150 ? g.lineTo(x(p.t), y(p.v)) : g.moveTo(x(p.t), y(p.v)));
   g.stroke();
   g.fillStyle = cssVar("--hit");
   for (const t of waveMarks) if (now - t < span) { g.beginPath(); g.arc(x(t), T + 6, 4, 0, 7); g.fill(); }
-  if (!waveData.length) { g.fillStyle = cssVar("--muted"); g.fillText("Waiting for data… (needs board firmware 2.4)", L + 8, T + 20); }
+  if (calOwnsWave()) { g.fillStyle = cssVar("--warn"); g.fillText("Paused: Setup → Find books is using the live wave right now", L + 8, T + 20); }
+  else if (!waveData.length) { g.fillStyle = cssVar("--muted"); g.fillText("Waiting for data… (needs board firmware 2.4)", L + 8, T + 20); }
 }
 function drawTiming() {
   const { g, W, H } = prepCanvas($("timeCv"));
