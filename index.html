@@ -667,9 +667,15 @@ function renderRest() {
 }
 
 // ---- step 2: find books (touch each book 3 times, left to right) ----
-const TAPS = 3;
-// Which pins are rising right now, strongest first (for the "This book is on" picker).
-function candidates() {
+// ---- step 2: find & calibrate books, one at a time from the left ----
+// For each book: find its pin (it picks the pin when one clearly rises, or you
+// choose it), listen to just that pin (live wave), measure your taps (and,
+// optionally, hovering), set the touch line between them (drag to adjust),
+// test it (a dot + the note = it would play), then save and go to the next.
+// Nothing reaches the board until you save in step 4.
+let cal = null;   // the book being calibrated (see calReset)
+let calKeep = 0, calRaf = 0;
+function candidates() {  // pins rising right now, strongest first
   const list = [];
   for (let s = 0; s < NSENS; s++) {
     const t = tele[s];
@@ -678,90 +684,194 @@ function candidates() {
   }
   return list.sort((a, b) => b.score - a.score).slice(0, 3);
 }
-function assignGrid() {  // same layout as the hand-picked grid, but taps assign the current book
-  const row = (label, base) => `<div class="pinrow"><span>${label}</span>${Array.from({ length: PINS }, (_, i) => {
-    const s = base + i, t = tele[s], mine = wiz && wiz.sensor === s;
+function calReset(s = null, manual = false) {
+  cal = { s, manual, data: [], taps: [], inTap: false, peak: 0, lowN: 0, cross: {}, hover: null, hoverUntil: 0, hoverMax: 0,
+          thr: null, thrManual: false, marks: [], simOn: false, drag: false, map: null, note: "" };
+  if (s != null) {
+    const k = draft.bookSensor.slice(0, draft.numBooks).indexOf(s);
+    if (k >= 0 && boardCfg && boardCfg.thr[s]) cal.thr = boardCfg.thr[s];  // start from what the board has
+    sendSysex([0x28, s, 1]);
+  }
+}
+function calSuggest() {  // where the touch line should go, from what we measured
+  if (!cal || cal.s == null || cal.thrManual || !cal.taps.length) return;
+  const tap = median(cal.taps), noise = tele[cal.s] ? tele[cal.s].noise : 0, floor = Math.max(4 * noise, 100);
+  let t = cal.hover != null ? (tap * 0.6 + Math.max(cal.hover, floor) * 1.4) / 2 : Math.max(0.45 * tap, floor);
+  t = Math.min(Math.max(t, floor), Math.max(0.8 * tap, floor));
+  cal.thr = Math.round(Math.min(Math.max(t, 50), 3000));
+}
+function calSample(t, v) {  // one reading of the pin being calibrated (200/s main board, 50/s second)
+  cal.data.push({ t, v });
+  while (cal.data.length && t - cal.data[0].t > 6000) cal.data.shift();
+  if (cal.hoverUntil) {  // measuring hover: just the highest it gets, no taps
+    cal.hoverMax = Math.max(cal.hoverMax, v);
+    if (t > cal.hoverUntil) { cal.hover = cal.hoverMax; cal.hoverUntil = 0; calSuggest(); renderSetup(); }
+    return;
+  }
+  const noise = tele[cal.s] ? tele[cal.s].noise : 0;
+  const start = cal.taps.length ? Math.max(0.4 * median(cal.taps), 4 * noise, 120) : Math.max(4 * noise, 150);
+  if (!cal.inTap) {
+    if (v > start) { cal.inTap = true; cal.peak = v; cal.lowN = 0; }
+  } else {
+    cal.peak = Math.max(cal.peak, v);
+    if (v < 0.35 * cal.peak) {
+      if (++cal.lowN >= 3) {  // finger lifted: one tap
+        cal.inTap = false;
+        cal.taps.push(cal.peak);
+        if (cal.taps.length > 6) cal.taps.shift();
+        calSuggest();
+        renderSetup();
+      }
+    } else cal.lowN = 0;
+  }
+  if (cal.thr) {  // test: would the board play here?
+    if (!cal.simOn && v > cal.thr) {
+      cal.simOn = true;
+      cal.marks.push(t);
+      const n = draft.bookNote[wiz.k] + draft.transpose;
+      noteOn(n, 100, null); setTimeout(() => noteOff(n), 250);
+    } else if (cal.simOn && v < 0.4 * cal.thr) cal.simOn = false;
+  }
+}
+function pinOptions(sel) {
+  let o = `<option value="">Tap the book, or choose its pin…</option>`;
+  for (let s = 0; s < NSENS; s++) {
     const other = Object.entries(found).find(([k, f]) => f.sensor === s && +k !== wiz.k);
-    return `<button class="pinbtn${mine ? " on" : ""}${t && !t.online ? " off" : ""}" id="apin${s}" data-s="${s}"
-      title="${sensorName(s)}${other ? ` (now book ${+other[0] + 1})` : ""}">${i + 1}${other ? "·" : ""}</button>`;
-  }).join("")}</div>`;
-  return `<div id="suAssign">${row("Main", 0)}${row("Second", PINS)}</div>`;
+    o += `<option value="${s}"${s === sel ? " selected" : ""}>${sensorName(s)}${other ? ` (now book ${+other[0] + 1})` : ""}${tele[s] && !tele[s].online ? " · not listening" : ""}</option>`;
+  }
+  return o;
+}
+function renderCalCard() {
+  const c = cal, k = wiz.k, tap = c.taps.length ? median(c.taps) : null;
+  let advice;
+  if (c.s == null) advice = c.note || "Tap the book. If the pin isn't picked by itself, choose it above.";
+  else if (c.taps.length < 3) advice = `Tap the book normally a few times (${c.taps.length}/3).`;
+  else if (c.hover == null) advice = "Optional but recommended: press Measure hover, then hold a finger just above the book (not touching) for 3 s.";
+  else if (c.hover * 1.15 >= tap * 0.7) advice = "Hovering and tapping are close: use a bigger foil in this book or tap firmer. You can still drag the line.";
+  else advice = "Looks good. Tap to test: a dot (and the note) means it plays. Drag the red line if you want it firmer or lighter.";
+  return `
+    <div class="big">Book ${k + 1} <span class="hint">(${wiz.returnTo != null ? "redoing this book" : k === 0 ? "the leftmost" : "next to the right"})</span></div>
+    <div class="row" style="margin-top:8px"><label for="calPin">Pin</label><select id="calPin">${pinOptions(c.s)}</select>
+      <span class="hint" id="calCand" style="margin:0"></span></div>
+    <canvas id="calCv" style="width:100%; height:170px; display:block; margin-top:10px; border:1px solid var(--line); border-radius:8px; touch-action:none; cursor:ns-resize"></canvas>
+    <div class="row" style="margin-top:8px">
+      <span class="chip ${c.taps.length >= 3 ? "good" : ""}">taps ${c.taps.length}${tap ? ` · reach ${pct(tap)}` : ""}</span>
+      <button id="calHover" ${c.s == null || c.hoverUntil ? "disabled" : ""}>${c.hoverUntil ? "Hover now…" : "Measure hover (3 s)"}</button>
+      <span class="chip">${c.hover != null ? `hover reaches ${pct(c.hover)}` : "hover not measured"}</span>
+      <span class="chip ${c.thr ? "good" : ""}">${c.thr ? `touch at ${pct(c.thr)}${c.thrManual ? " (set by you)" : ""}` : "touch line not set"}</span>
+    </div>
+    <p class="hint">${advice}</p>
+    <div class="row" style="margin-top:6px">
+      <button class="primary" id="calSave" ${c.s != null && c.thr ? "" : "disabled"}>Save book ${k + 1} → next</button>
+      <button id="calRedo">Start this book again</button><button id="calSkip">No book here</button>
+      <button id="calBack" ${k && wiz.returnTo == null ? "" : "disabled"}>← Back</button><button id="calFinish">Finish</button>
+    </div>`;
 }
 function renderFind() {
   const n = wiz ? wiz.numBooks : draft.numBooks;
   const chips = Object.entries(found).sort((a, b) => a[0] - b[0]).map(([k, f]) =>
-    `<button class="chip good" data-k="${k}" title="Wrong pin? Tap to redo this book">Book ${+k + 1} → ${sensorName(f.sensor)} · ${f.taps.length ? pct(median(f.taps)) : "no taps"} ✎</button>`).join("");
-  let prompt;
-  if (!wiz) prompt = `<div class="big">Find which sensor each book is on</div>
-      <p class="hint">You'll touch each book 3 times, from the left. This also measures how strong your taps are and whether books disturb their neighbours. If it picks the wrong pin, you can tell it the right one.</p>`;
-  else if (wiz.done) prompt = `<div class="big">All ${Object.keys(found).length} books found ✓</div>
-      <p class="hint">Wrong pin on a book? Tap its chip below to redo just that one. Next: choose the notes, then review the sensitivity and save.</p>`;
-  else prompt = `<div class="big">Touch book ${wiz.k + 1} <span class="hint">(${wiz.returnTo != null ? "redoing this book" : wiz.k === 0 ? "the leftmost" : "next to the right"})</span></div>
-      <p class="hint">${wiz.sensor == null ? "Tap it normally, the way you'll play it." : `${sensorName(wiz.sensor)}${wiz.manual ? " (you chose it)" : ""} · tap ${wiz.taps.length + (wiz.inTap ? 1 : 0)} of ${TAPS}`}${wiz.note ? " · " + wiz.note : ""}</p>
-      <div class="dots">${Array.from({ length: TAPS }, (_, i) => `<i class="${i < wiz.taps.length ? "done" : ""}"></i>`).join("")}</div>
-      <div style="margin-top:12px"><b>This book is on:</b> <span class="hint" id="suCand" style="margin:0"></span></div>
-      <p class="hint" style="margin:4px 0 0">Picked the wrong pin, or can't decide? Tap the right pin here; then tap the book 3 times as usual.</p>
-      ${assignGrid()}`;
+    `<button class="chip good" data-k="${k}" title="Tap to redo this book">Book ${+k + 1} → ${sensorName(f.sensor)}${f.thr ? ` · touch ${pct(f.thr)}` : ""} ✎</button>`).join("");
+  let body;
+  if (!wiz) body = `<div class="big">Find and calibrate your books</div>
+      <p class="hint">One book at a time, from the left: find its pin, tap it a few times, hover over it, and set its touch line. Then save it and go to the next.</p>`;
+  else if (wiz.done) body = `<div class="big">${Object.keys(found).length} books calibrated ✓</div>
+      <p class="hint">Tap a book's chip below to redo it. Then choose the notes (step 3) and <b>save in step 4</b>: until you save, the board keeps listening on every pin.</p>
+      <div class="row" style="margin-top:10px"><button class="primary" id="suNext3">Next: notes →</button></div>`;
+  else body = renderCalCard();
   $("suBody").innerHTML = `
     <div class="row"><label for="suN">How many books?</label>
       <input type="number" id="suN" min="1" max="28" value="${n}" style="width:70px" ${wiz && !wiz.done ? "disabled" : ""}>
       <button class="${wiz ? "" : "primary"}" id="suFindStart">${wiz ? "Start over" : "Start"}</button></div>
-    <div class="prompt">${prompt}
-      ${wiz && !wiz.done ? `<div class="row" style="margin-top:10px">
-        ${wiz.sensor != null ? `<button id="suKeep" title="Keep this pin and move on, without finishing the 3 taps">Next book →</button>` : ""}
-        <button id="suRedo">Redo this book</button><button id="suSkip">No book here, skip</button>
-        <button id="suBack" ${wiz.k && wiz.returnTo == null ? "" : "disabled"}>← Back</button><button id="suFinish">Finish early</button></div>` : ""}
-      ${wiz && wiz.done ? `<div class="row" style="margin-top:10px"><button class="primary" id="suNext3">Next: notes →</button></div>` : ""}
-    </div>
+    <div class="prompt">${body}</div>
     <div class="chips" id="suChips">${chips}</div>
-    ${wiz && !wiz.done ? "" : `<h2 style="margin-top:18px">Or choose pins by hand</h2>
-    <p class="hint" style="margin-top:0">Blue = this pin has a book. Tap a pin to add or remove its book (new books get the next note up), then go to 4 · Review &amp; save. A pin outlined red is being touched right now.</p>
+    ${wiz && !wiz.done ? "" : `<h2 style="margin-top:18px">Or just pick pins</h2>
+    <p class="hint" style="margin-top:0">Blue = this pin has a book. Tap a pin to add or remove its book (new books get the next note up), then go to 4 · Review &amp; save.</p>
     ${pinGrid()}`}
     <p class="hint">${draft.numBooks} book${draft.numBooks === 1 ? "" : "s"}${boardCfg && JSON.stringify(encodeCfg(draft)) !== JSON.stringify(encodeCfg(boardCfg)) ? " · not saved yet" : ""}</p>`;
   if ($("suPins")) $("suPins").onclick = e => { const s = e.target.dataset.s; if (s != null) togglePin(+s); };
   $("suFindStart").onclick = () => {
     const nb = Math.max(1, Math.min(28, +$("suN").value || 24));
     found = {};
-    wiz = { numBooks: nb, k: 0, sensor: null, taps: [], inTap: false, cross: {}, ref: 0, cur: 0, note: "" };
-    // Firmware 2.6+ only listens on pins that already have books; to find new
-    // ones, ask both boards to listen on every pin (they restart for a moment).
+    wiz = { numBooks: nb, k: 0, done: false, returnTo: null };
+    calReset();
+    // Boards only listen on pins that already have books; ask both to listen on
+    // every pin while calibrating (they restart for a moment).
     const listening = tele.slice(0, PINS).every(t => t.online);
     if (info && parseFloat(info.fw) >= 2.6 && !listening) {
       sendSysex([0x2A, 1]);
-      wiz.note = "the board is restarting to listen on every pin, start touching in a few seconds";
+      cal.note = "The board is restarting to listen on every pin. Start tapping in a few seconds.";
     }
+    calStartLoop();
     renderSetup();
   };
-  // Tap a found book's chip to redo just that book (wrong pin).
   $("suChips").onclick = e => {
     const k = e.target.dataset.k;
     if (k == null || !wiz) return;
     wiz.returnTo = wiz.done ? "done" : wiz.k;
     wiz.done = false;
     wiz.k = +k;
-    resetBook();
+    calReset(found[k] ? found[k].sensor : null, true);
+    calStartLoop();
     renderSetup();
   };
   if (!wiz) return;
-  if ($("suAssign")) $("suAssign").onclick = e => { const s = e.target.dataset.s; if (s != null) chooseSensor(+s); };
-  if ($("suKeep")) $("suKeep").onclick = () => {
-    found[wiz.k] = { sensor: wiz.sensor, taps: wiz.taps.slice(), cross: { ...wiz.cross } };
+  if ($("suNext3")) $("suNext3").onclick = () => { step = 3; renderSetup(); };
+  if (wiz.done) return;
+  $("calPin").onchange = () => { const v = $("calPin").value; calReset(v === "" ? null : +v, true); renderSetup(); };
+  $("calHover").onclick = () => { cal.hoverMax = 0; cal.hoverUntil = performance.now() + 3000; renderSetup(); };
+  $("calSave").onclick = () => {
+    const s = cal.s, k = wiz.k;
+    for (const [j, f] of Object.entries(found)) if (f.sensor === s && +j !== k) delete found[j];  // pin moved to this book
+    found[k] = { sensor: s, taps: cal.taps.slice(), cross: { ...cal.cross }, thr: cal.thr, hover: cal.hover };
+    draft.thr[s] = cal.thr;
     nextBook();
   };
-  if ($("suRedo")) $("suRedo").onclick = () => { resetBook(); renderSetup(); };
-  if ($("suSkip")) $("suSkip").onclick = () => { delete found[wiz.k]; nextBook(); };
-  if ($("suBack")) $("suBack").onclick = () => { wiz.k--; delete found[wiz.k]; resetBook(); renderSetup(); };
-  if ($("suFinish")) $("suFinish").onclick = () => finishFind();
-  if ($("suNext3")) $("suNext3").onclick = () => { step = 3; renderSetup(); };
+  $("calRedo").onclick = () => { calReset(cal.s, cal.manual); renderSetup(); };
+  $("calSkip").onclick = () => { delete found[wiz.k]; nextBook(); };
+  $("calBack").onclick = () => { wiz.k--; calReset(found[wiz.k] ? found[wiz.k].sensor : null, true); renderSetup(); };
+  $("calFinish").onclick = () => finishFind();
+  // drag the touch line
+  const cv = $("calCv");
+  const val = e => { const r = cv.getBoundingClientRect(), m = cal.map; return m ? m.bot + (m.T + m.ph - (e.clientY - r.top)) / m.ph * (m.top - m.bot) : null; };
+  const setThr = v => { if (v == null) return; cal.thr = Math.round(Math.min(3000, Math.max(50, v))); cal.thrManual = true; };
+  cv.onpointerdown = e => { if (cal.s == null) return; cal.drag = true; cv.setPointerCapture(e.pointerId); setThr(val(e)); };
+  cv.onpointermove = e => { if (cal.drag) setThr(val(e)); };
+  cv.onpointerup = cv.onpointercancel = () => { if (cal.drag) { cal.drag = false; renderSetup(); } };
 }
-// You told it the pin: lock this book to it and count taps on that pin.
-function chooseSensor(s) {
-  for (const [k, f] of Object.entries(found)) if (f.sensor === s && +k !== wiz.k) delete found[k];  // moved here
-  Object.assign(wiz, { sensor: s, manual: true, taps: [], inTap: false, cross: {}, cur: 0, note: "",
-                       ref: Math.max(tele[s] ? tele[s].thr : 300, 150) });  // its touch level until a real tap is seen
-  renderSetup();
+function calStartLoop() {
+  clearInterval(calKeep); cancelAnimationFrame(calRaf);
+  calKeep = setInterval(() => { if (wiz && !wiz.done && cal && cal.s != null) sendSysex([0x28, cal.s, 1]); }, 3000);
+  const loop = () => { if (step === 2 && wiz && !wiz.done && $("calCv")) drawCal(); calRaf = requestAnimationFrame(loop); };
+  loop();
 }
-function resetBook() { Object.assign(wiz, { sensor: null, manual: false, taps: [], inTap: false, cross: {}, ref: 0, cur: 0, note: "" }); }
+function drawCal() {
+  const { g, W, H } = prepCanvas($("calCv"));
+  const now = performance.now(), span = 5000, L = 44, R = 8, T = 8, B = 18, pw = W - L - R, ph = H - T - B;
+  const d = cal.data, thr = cal.thr || 300;
+  let top = Math.max(thr * 2, cal.hover || 0, ...d.map(p => p.v)) * 1.15, bot = Math.min(-thr * 0.2, ...d.map(p => p.v));
+  if (cal.drag && cal.map) ({ top, bot } = cal.map);
+  cal.map = { T, ph, top, bot };
+  const x = t => L + (t - (now - span)) / span * pw, y = v => T + ph - (v - bot) / (top - bot) * ph;
+  g.fillStyle = cssVar("--muted"); g.strokeStyle = cssVar("--line"); g.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) { const v = bot + (top - bot) * i / 4; g.beginPath(); g.moveTo(L, y(v)); g.lineTo(W - R, y(v)); g.stroke(); g.fillText(pct(Math.max(0, v)), 4, y(v) + 4); }
+  if (cal.s == null) { g.fillText("Waiting for a pin…", L + 8, T + 20); return; }
+  if (cal.hover != null) {  // hover band: below this is "not a touch"
+    g.fillStyle = "rgba(160,160,160,0.18)"; g.fillRect(L, y(cal.hover), pw, y(bot) - y(cal.hover));
+  }
+  if (cal.hoverUntil) { g.fillStyle = cssVar("--warn"); g.fillText("Hover just above the book (don't touch)…", L + 8, T + 16); }
+  if (cal.thr) {
+    g.strokeStyle = cssVar("--hit"); g.setLineDash([6, 4]); g.lineWidth = 2;
+    g.beginPath(); g.moveTo(L, y(cal.thr)); g.lineTo(W - R, y(cal.thr)); g.stroke(); g.setLineDash([]);
+    g.fillStyle = cssVar("--hit"); g.fillText("touch line (drag)", W - R - 100, y(cal.thr) - 4);
+  }
+  g.strokeStyle = cssVar("--accent"); g.lineWidth = 2; g.beginPath();
+  d.forEach((p, i) => i ? g.lineTo(x(p.t), y(p.v)) : g.moveTo(x(p.t), y(p.v)));
+  g.stroke();
+  g.fillStyle = cssVar("--hit");
+  for (const t of cal.marks) if (now - t < span) { g.beginPath(); g.arc(x(t), T + 6, 4, 0, 7); g.fill(); }
+  if (!d.length) { g.fillStyle = cssVar("--muted"); g.fillText(`Listening to ${sensorName(cal.s)}… tap the book`, L + 8, T + 20); }
+}
+function resetBook() { calReset(); }
 function nextBook() {
   if (wiz.returnTo != null) {  // was redoing one book: go back to where we were
     const r = wiz.returnTo;
@@ -769,66 +879,48 @@ function nextBook() {
     if (r === "done") return finishFind();
     wiz.k = r;
   } else wiz.k++;
-  while (wiz.k < wiz.numBooks && found[wiz.k]) wiz.k++;  // skip books already found
-  resetBook();
+  while (wiz.k < wiz.numBooks && found[wiz.k]) wiz.k++;  // skip books already done
   if (wiz.k >= wiz.numBooks) return finishFind();
+  calReset();
   renderSetup();
 }
 function finishFind() {
   wiz.done = true;
   wiz.returnTo = null;
+  clearInterval(calKeep);
   // Books found become the new layout; books skipped have no sensor.
   const nb = wiz.numBooks;
   draft.numBooks = nb;
   for (let k = 0; k < NSENS; k++) draft.bookSensor[k] = k < nb && found[k] ? found[k].sensor : NO_SENSOR;
-  applySuggested();
+  applySuggested();  // only books without a hand-set line
   renderSetup();
 }
-function wizFrame() {
-  if (!wiz || wiz.done || step !== 2) return;
+function wizFrame() {  // telemetry (20/s): find the pin, record neighbours' rise during taps
+  if (!wiz || wiz.done || step !== 2 || !cal) return;
   const cand = candidates();
-  if ($("suCand")) $("suCand").textContent = cand.length
-    ? "rising now: " + cand.map(c => `${sensorName(c.s)} ${pct(c.peak)}`).join(" · ")
-    : "nothing rising, tap the book";
-  const taken = new Set(Object.entries(found).filter(([k]) => +k !== wiz.k).map(([, f]) => f.sensor));
-  if (wiz.sensor == null) {
-    // which sensor rose clearly above its noise, well ahead of the others?
-    const score = s => tele[s].online ? tele[s].peak / Math.max(4 * tele[s].noise, 100) : 0;
-    let best = -1, bestScore = 0, second = 0;
-    for (let s = 0; s < NSENS; s++) {
-      const sc = score(s);
-      if (sc > bestScore) { second = bestScore; bestScore = sc; best = s; } else if (sc > second) second = sc;
-    }
-    if (best < 0 || tele[best].peak < Math.max(6 * tele[best].noise, 150)) return;
-    if (bestScore < 2 * second) {  // two pins rising together (crosstalk): ask instead of guessing
-      if (!wiz.note) { wiz.note = "two pins are rising together, tap the right one below"; renderSetup(); }
-      return;
-    }
-    if (taken.has(best)) {
-      const k = Object.entries(found).find(([, f]) => f.sensor === best)[0];
-      wiz.note = `that was book ${+k + 1}, touch book ${wiz.k + 1} (or pick its pin below)`;
-      renderSetup();
-      return;
-    }
-    Object.assign(wiz, { sensor: best, ref: tele[best].peak, cur: tele[best].peak, inTap: true, note: "" });
-    renderSetup();
+  if ($("calCand")) $("calCand").textContent = cand.length
+    ? "rising now: " + cand.map(c => `${sensorName(c.s)} ${pct(c.peak)}`).join(" · ") : "";
+  if (cal.s != null) {
+    if (cal.inTap) for (let o = 0; o < NSENS; o++) if (o !== cal.s && tele[o].online) cal.cross[o] = Math.max(cal.cross[o] || 0, tele[o].peak);
     return;
   }
-  const s = wiz.sensor, p = tele[s].peak;
-  if (wiz.inTap) {
-    wiz.cur = Math.max(wiz.cur, p);
-    for (let o = 0; o < NSENS; o++) if (o !== s && tele[o].online) wiz.cross[o] = Math.max(wiz.cross[o] || 0, tele[o].peak);
-    if (p < 0.2 * wiz.ref) {  // finger lifted
-      wiz.taps.push(wiz.cur);
-      wiz.inTap = false;
-      if (wiz.manual && wiz.taps.length === 1) wiz.ref = Math.max(wiz.ref, wiz.cur);  // learn this pin's real tap height
-      if (wiz.taps.length >= TAPS) {
-        found[wiz.k] = { sensor: s, taps: wiz.taps.slice(), cross: { ...wiz.cross } };
-        return nextBook();
-      }
-      renderSetup();
-    }
-  } else if (p > 0.4 * wiz.ref) { wiz.inTap = true; wiz.cur = p; renderSetup(); }
+  // no pin yet: take it when one pin clearly rises above its noise, well ahead of the others
+  const score = s => tele[s].online ? tele[s].peak / Math.max(4 * tele[s].noise, 100) : 0;
+  let best = -1, bestScore = 0, second = 0;
+  for (let s = 0; s < NSENS; s++) {
+    const sc = score(s);
+    if (sc > bestScore) { second = bestScore; bestScore = sc; best = s; } else if (sc > second) second = sc;
+  }
+  if (best < 0 || tele[best].peak < Math.max(6 * tele[best].noise, 150)) return;
+  if (bestScore < 2 * second) {
+    const msg = "Two pins are rising together: choose the right one in the Pin list.";
+    if (cal.note !== msg) { cal.note = msg; renderSetup(); }
+    return;
+  }
+  const other = Object.entries(found).find(([k, f]) => f.sensor === best && +k !== wiz.k);
+  if (other) { cal.note = `That was book ${+other[0] + 1}. Tap book ${wiz.k + 1}, or choose its pin.`; renderSetup(); return; }
+  calReset(best, false);
+  renderSetup();
 }
 
 // ---- thresholds from what step 2 measured ----
@@ -859,6 +951,7 @@ function applySuggested() {
   for (let k = 0; k < draft.numBooks; k++) {
     const a = analyse(k);
     if (!a || a.tap == null) continue;
+    if (Object.values(found).some(f => f.sensor === a.s && f.thr)) continue;  // set by hand in step 2
     let t = Math.max(0.45 * a.tap, a.floor, 1.4 * a.cross);
     t = Math.min(t, Math.max(0.8 * a.tap, a.floor));  // never above what a normal tap reaches
     draft.thr[a.s] = Math.round(Math.min(Math.max(t, 50), 16000));
@@ -1203,6 +1296,8 @@ $("dbgPanel").addEventListener("toggle", () => {
 });
 function onWave(d) {
   const s = d[4], touched = !!d[5], thr = get14(d, 6), n = d[8], dt = s < PINS ? 5 : 20, now = performance.now();
+  if (cal && wiz && !wiz.done && s === cal.s)  // Setup step 2 is calibrating this pin
+    for (let i = 0; i < n; i++) calSample(now - (n - 1 - i) * dt, get14(d, 9 + 2 * i) - 8192);
   if (String(s) !== $("waveSel").value) return;
   for (let i = 0; i < n; i++) waveData.push({ t: now - (n - 1 - i) * dt, v: get14(d, 9 + 2 * i) - 8192, thr, touched });
   while (waveData.length && now - waveData[0].t > 6000) waveData.shift();
