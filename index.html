@@ -106,6 +106,50 @@
   footer { color: var(--muted); font-size: 12px; margin-top: 18px; }
   footer a { color: inherit; }
   .warn { color: var(--bad); }
+  /* ---- Guide (play a song) ---- */
+  #guide { position: fixed; inset: 0; z-index: 20; background: var(--bg); display: none; flex-direction: column;
+    padding: 16px; overflow: auto; }
+  #guide.on { display: flex; }
+  .g-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .g-title { font-size: 20px; font-weight: 650; flex: 1; }
+  .g-songs { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); margin-top: 16px; }
+  .g-song { text-align: left; padding: 14px; border-radius: 12px; }
+  .g-song b { display: block; font-size: 17px; margin-bottom: 4px; }
+  .g-song span { color: var(--muted); font-size: 13px; }
+  .g-msg { max-width: 640px; margin: 16px auto 0; text-align: center; font-size: 15px; }
+  .g-stage { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; min-height: 0; }
+  .g-nextlabel { font-size: 16px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
+  .g-next { font-size: min(36vw, 210px); font-weight: 800; line-height: .9; color: var(--hit);
+    text-shadow: 0 0 44px rgba(255, 122, 82, .45); font-variant-numeric: tabular-nums; }
+  .g-up { display: flex; gap: 18px; align-items: flex-end; min-height: 76px; }
+  .g-up div { font-size: 34px; font-weight: 700; color: var(--muted); text-align: center; font-variant-numeric: tabular-nums; }
+  .g-up div:first-child { font-size: 50px; color: var(--ink); }
+  .g-up i { display: block; height: 6px; border-radius: 3px; background: currentColor; margin: 6px auto 0; opacity: .7; }
+  .g-shelf { display: flex; gap: 6px; align-items: flex-end; width: 100%; max-width: 920px; height: min(34vh, 250px);
+    padding: 0 6px; border-bottom: 8px solid #6b4f36; border-radius: 0 0 4px 4px; }
+  .g-book { flex: 1; min-width: 0; border-radius: 6px 6px 2px 2px; display: flex; flex-direction: column; justify-content: flex-end;
+    align-items: center; padding-bottom: 10px; color: #fff; font-weight: 800; font-size: clamp(16px, 4vw, 30px);
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .25), inset 6px 0 0 rgba(255, 255, 255, .08); transition: transform .12s, box-shadow .12s, filter .12s; }
+  .g-book small { font-size: clamp(10px, 2.2vw, 14px); font-weight: 600; opacity: .85; }
+  .g-book.dim { filter: brightness(.55) saturate(.7); }
+  .g-book.next { filter: brightness(1.25); transform: translateY(-12px);
+    box-shadow: 0 0 0 4px var(--hit), 0 0 44px 10px rgba(255, 122, 82, .55); }
+  .g-book.ok { animation: gOk .35s; }
+  .g-book.bad { animation: gBad .5s; }
+  @keyframes gOk { 0% { filter: brightness(2.2); } 100% { filter: brightness(1); } }
+  @keyframes gBad { 0%, 100% { box-shadow: none; } 30% { box-shadow: 0 0 0 4px var(--bad), 0 0 30px var(--bad); } }
+  .g-progress { width: 100%; max-width: 920px; height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
+  .g-progress i { display: block; height: 100%; width: 0; background: var(--good); transition: width .2s; }
+  .g-bar { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  .g-done { text-align: center; }
+  .g-done .big { font-size: clamp(34px, 9vw, 72px); font-weight: 800; color: var(--good); }
+  .g-done .sub { font-size: 20px; color: var(--muted); margin-top: 6px; }
+  .g-confetti { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 21; }
+  .g-confetti i { position: absolute; top: -12px; width: 9px; height: 14px; border-radius: 2px; }
+  @media (prefers-reduced-motion: no-preference) {
+    .g-confetti i { animation: gFall 2.2s ease-in forwards; }
+    @keyframes gFall { to { transform: translateY(105vh) rotate(540deg); opacity: .2; } }
+  }
 </style>
 </head>
 <body>
@@ -116,10 +160,16 @@
   <p id="startMsg"></p>
 </div>
 
+<div id="guide" role="dialog" aria-label="Play a song">
+  <div class="g-top"><span class="g-title" id="guideTitle">Play a song</span><button id="guideClose">✕ Close</button></div>
+  <div id="guideBody" style="flex:1; display:flex; flex-direction:column"></div>
+</div>
+
 <main>
   <header>
     <h1>TapTune</h1>
     <span class="pill"><span class="dot" id="midiDot"></span><span id="midiText">No MIDI device</span></span>
+    <button id="btnGuide" class="primary" title="Follow the books to play a song">Play a song</button>
     <button id="btnBle" title="Connect to the board wirelessly (Chrome/Edge on Android, Mac, Windows)">Connect Bluetooth</button>
   </header>
 
@@ -280,6 +330,7 @@ function nearest(midi) {
 
 // ---- voices ----
 function noteOn(midi, velocity, t0, delay = 0) {  // delay (s): steady-timing wait, 0 = now
+  if (t0 != null && typeof guideHit === "function") guideHit(midi);  // someone played it (not "Listen first")
   if (!ctx || !samples.length) return;
   stopVoice(midi, 0.015, delay);                // retrigger: quick fade of the old one
   const s = nearest(midi);
@@ -1375,6 +1426,203 @@ function drawTiming() {
     g.fillText(bleLink ? "Play some notes over Bluetooth…" : "Connect over Bluetooth to see timing", L + 8, T + 20);
   }
 }
+
+// ---- Guide: play a song by following the books ----
+// Pick a song, optionally let it set the books' notes to fit, then the screen
+// shows which book to touch next (big number, glowing spine) and moves on when
+// the right note arrives from the board. Wrong books flash red and don't count.
+// Works with whatever plays notes (Bluetooth, USB, the on-screen keys).
+const SONGS = [
+  { id: "nokia", name: "Nokia tune", by: "Gran Vals — Francisco Tárrega", bpm: 220,
+    notes: ["E5", "D5", "F#4", "G#4", "C#5", "B4", "D4", "E4", "B4", "A4", "C#4", "E4", "A4"],
+    beats: [.5, .5, 1, 1, .5, .5, 1, 1, .5, .5, 1, 1, 3] },
+  { id: "jingle", name: "Jingle Bells", by: "chorus — traditional", bpm: 132,
+    notes: ["E4", "E4", "E4", "E4", "E4", "E4", "E4", "G4", "C4", "D4", "E4"],
+    beats: [1, 1, 2, 1, 1, 2, 1, 1, 1.5, .5, 4] },
+  { id: "sargam", name: "Sa Re Ga Ma Pa Dha Ni Sa", by: "the Indian scale, up", bpm: 96,
+    notes: ["C4", "D4", "E4", "F4", "G4", "A4", "B4", "C5"],
+    beats: [1, 1, 1, 1, 1, 1, 1, 2] },
+];
+const SPINES = ["#7a2e2e", "#2e4a7a", "#2f6b4f", "#7a5a1e", "#5a2e6b", "#1e6b6b", "#8a3f1a", "#3a3f8a", "#6b2e4f", "#4a6b1e",
+                "#7a2e5a", "#1e4f6b", "#6b4a2e", "#2e6b3a"];
+const NOTE_PC = { C: 0, "C#": 1, D: 2, "D#": 3, E: 4, F: 5, "F#": 6, G: 7, "G#": 8, A: 9, "A#": 10, B: 11 };
+const midiOf = n => { const m = n.match(/^([A-G]#?)(\d)$/); return 12 * (+m[2] + 1) + NOTE_PC[m[1]]; };
+let guide = null;  // { song, notes, i, start, listening, done }
+
+function guideCfg() { return boardCfg || draft; }
+function bookOfNote(m) {  // which book (0-based) plays MIDI note m right now, -1 if none
+  const c = guideCfg();
+  if (!c) return -1;
+  for (let k = 0; k < c.numBooks; k++) if (c.bookSensor[k] !== NO_SENSOR && c.bookNote[k] + c.transpose === m) return k;
+  return -1;
+}
+function guideOpen() {
+  guide = null;
+  $("guide").classList.add("on");
+  guideRender();
+}
+function guideClose() { guideStopListen(); guide = null; $("guide").classList.remove("on"); }
+function guideMissing(song) { return [...new Set(song.notes)].filter(n => bookOfNote(midiOf(n)) < 0); }
+
+function guideRender() {
+  const g = $("guideBody");
+  if (!guide) {  // song list
+    const hasBackup = (() => { try { return !!localStorage.getItem("taptune-prevmap"); } catch { return false; } })();
+    g.innerHTML = `<div class="g-songs">${SONGS.map(s => {
+      const miss = guideMissing(s), books = new Set(s.notes).size;
+      return `<button class="g-song" data-id="${s.id}"><b>${s.name}</b><span>${s.by} · ${s.notes.length} taps on ${books} books${
+        miss.length ? ` · <span class="warn">${miss.length} note${miss.length > 1 ? "s" : ""} not on your books</span>` : " · ready"}</span></button>`;
+    }).join("")}</div>
+    <p class="g-msg hint">Pick a song. If your books don't play its notes yet, TapTune can set them for you.
+      ${hasBackup ? `<br><button id="gRestore" style="margin-top:10px">Restore my previous book notes</button>` : ""}</p>`;
+    g.querySelectorAll(".g-song").forEach(b => b.onclick = () => guideStart(SONGS.find(s => s.id === b.dataset.id)));
+    if ($("gRestore")) $("gRestore").onclick = guideRestore;
+    $("guideTitle").textContent = "Play a song";
+    return;
+  }
+  const s = guide.song;
+  $("guideTitle").textContent = s.name;
+  const miss = guideMissing(s);
+  if (miss.length) {  // books don't play this song's notes: offer to set them
+    const asc = [...new Set(s.notes)].map(midiOf).sort((a, b) => a - b);
+    g.innerHTML = `<div class="g-msg">
+      <p>Your books don't play ${miss.map(n => n.replace("#", "♯")).join(", ")} yet.</p>
+      <p>This song needs <b>${asc.length} books</b>. TapTune can give books 1–${asc.length} (from the left) these notes:<br>
+      <b>${asc.map((m, k) => `${k + 1}:${noteName(m)}`).join("  ")}</b></p>
+      <div class="g-bar"><button class="primary" id="gSet">Set my books for this song</button><button id="gBack">Back</button></div>
+      <p class="hint" id="gMsg"></p></div>`;
+    $("gSet").onclick = () => guideSetBooks(asc);
+    $("gBack").onclick = () => { guide = null; guideRender(); };
+    return;
+  }
+  if (guide.done) {
+    const secs = ((guide.end - guide.start) / 1000).toFixed(1);
+    g.innerHTML = `<div class="g-stage"><div class="g-done"><div class="big">You played it!</div>
+      <div class="sub">${s.notes.length} notes in ${secs} s${guide.misses ? ` · ${guide.misses} wrong book${guide.misses > 1 ? "s" : ""}` : " · no wrong books"}</div></div>
+      <div class="g-bar"><button class="primary" id="gAgain">Play again</button><button id="gSongs">Songs</button></div></div>`;
+    $("gAgain").onclick = () => guideStart(s);
+    $("gSongs").onclick = () => { guide = null; guideRender(); };
+    return;
+  }
+  // the guide itself
+  const c = guideCfg(), used = s.notes.map(n => bookOfNote(midiOf(n)));
+  const shelfN = Math.max(...used) + 1;
+  const nextK = used[guide.i];
+  const up = [];
+  for (let j = guide.i + 1; j < Math.min(s.notes.length, guide.i + 5); j++) up.push(j);
+  const mark = b => `<i style="width:${b >= 2 ? 46 : b >= 1 ? 28 : 12}px"></i>`;
+  g.innerHTML = `<div class="g-stage">
+    <div class="g-nextlabel">${guide.listening ? "Listen" : guide.i === 0 ? "Start with book" : "Next book"}</div>
+    <div class="g-next" id="gNext">${nextK + 1}</div>
+    <div style="margin-top:-6px">${mark(s.beats[guide.i])}</div>
+    <div class="g-up">${up.map(j => `<div>${used[j] + 1}${mark(s.beats[j])}</div>`).join("")}</div>
+    <div class="g-shelf">${Array.from({ length: shelfN }, (_, k) => {
+      const inSong = used.includes(k), h = 78 + ((k * 37) % 23);
+      return `<div class="g-book${k === nextK ? " next" : ""}${inSong ? "" : " dim"}" id="gb${k}" style="height:${h}%; background:${SPINES[k % SPINES.length]}">${k + 1}<small>${noteName(c.bookNote[k] + c.transpose)}</small></div>`;
+    }).join("")}</div>
+    <div class="g-progress"><i style="width:${guide.i / s.notes.length * 100}%"></i></div>
+    <div class="g-bar">
+      <button id="gListen" ${guide.listening ? "disabled" : ""}>${guide.listening ? "Listening…" : "Listen first"}</button>
+      <button id="gRestart">Restart</button><button id="gSongs">Songs</button>
+    </div></div>`;
+  $("gListen").onclick = guideListen;
+  $("gRestart").onclick = () => guideStart(s);
+  $("gSongs").onclick = () => { guideStopListen(); guide = null; guideRender(); };
+}
+function guideStart(song) {
+  guideStopListen();
+  guide = { song, notes: song.notes.map(midiOf), i: 0, start: 0, end: 0, misses: 0, listening: false, done: false, timers: [] };
+  guideRender();
+}
+function guideFlash(k, cls) {
+  const el = $("gb" + k);
+  if (!el) return;
+  el.classList.remove("ok", "bad"); void el.offsetWidth; el.classList.add(cls);
+}
+// Called for every note a person plays (board or on-screen keys), not for "Listen first".
+function guideHit(m) {
+  if (!guide || guide.done || guide.listening || guideMissing(guide.song).length) return;
+  const k = bookOfNote(m);
+  if (m === guide.notes[guide.i]) {
+    if (guide.i === 0) guide.start = performance.now();
+    guide.i++;
+    if (guide.i >= guide.notes.length) { guide.end = performance.now(); guide.done = true; guideRender(); guideConfetti(); return; }
+    guideRender();
+    guideFlash(k, "ok");
+  } else if (k >= 0) { guide.misses++; guideFlash(k, "bad"); }
+}
+function guideListen() {  // play the song at its rhythm, lighting each book
+  if (!guide || guide.listening) return;
+  guide.listening = true;
+  const s = guide.song, beat = 60000 / s.bpm, keep = guide.i;
+  let t = 300;
+  s.notes.forEach((n, j) => {
+    const m = midiOf(n), dur = s.beats[j] * beat;
+    guide.timers.push(setTimeout(() => {
+      guide.i = j; guideRender();
+      noteOn(m, 100, null);
+      guide.timers.push(setTimeout(() => noteOff(m), Math.max(120, dur * 0.9)));
+    }, t));
+    t += dur;
+  });
+  guide.timers.push(setTimeout(() => { guide.listening = false; guide.i = keep; guideRender(); }, t + 400));
+  guideRender();
+}
+function guideStopListen() {
+  if (!guide) return;
+  guide.timers.forEach(clearTimeout);
+  guide.timers = [];
+  guide.listening = false;
+}
+function guideSetBooks(asc) {
+  const c0 = boardCfg;
+  if (!c0 || !midiOut || !sysexOk) { $("gMsg").textContent = "Connect the board first (Bluetooth or USB), so the books can be changed."; return; }
+  const ready = c0.bookSensor.slice(0, c0.numBooks).filter(s => s !== NO_SENSOR).length;
+  if (c0.numBooks < asc.length || c0.bookSensor.slice(0, asc.length).some(s => s === NO_SENSOR)) {
+    $("gMsg").textContent = `This song needs books 1–${asc.length} set up; you have ${ready}. Add books in Setup first.`;
+    return;
+  }
+  if (!confirm(`Change the notes of books 1–${asc.length} to ${asc.map(noteName).join(" ")}? You can restore your current notes afterwards.`)) return;
+  try { localStorage.setItem("taptune-prevmap", JSON.stringify({ bookNote: c0.bookNote, transpose: c0.transpose })); } catch {}
+  const c = clone(c0);
+  c.transpose = 0;
+  asc.forEach((m, k) => { c.bookNote[k] = m; });
+  boardCfg = c;
+  if (draft && !draft.saving) draft = clone(c);
+  sendSysex(encodeCfg(c));
+  buildKeyboard(notesOf(c));
+  guideRender();
+}
+function guideRestore() {
+  let prev = null;
+  try { prev = JSON.parse(localStorage.getItem("taptune-prevmap")); } catch {}
+  if (!prev || !boardCfg || !midiOut || !sysexOk) { alert("Connect the board first."); return; }
+  if (!confirm("Put your previous book notes back?")) return;
+  const c = clone(boardCfg);
+  c.bookNote = prev.bookNote; c.transpose = prev.transpose;
+  boardCfg = c;
+  if (draft && !draft.saving) draft = clone(c);
+  sendSysex(encodeCfg(c));
+  buildKeyboard(notesOf(c));
+  try { localStorage.removeItem("taptune-prevmap"); } catch {}
+  guideRender();
+}
+function guideConfetti() {
+  const box = document.createElement("div");
+  box.className = "g-confetti";
+  const colors = ["#ff7a52", "#6c9cf0", "#5cc28a", "#e5b23a", "#ef6b5d"];
+  for (let i = 0; i < 60; i++) {
+    const p = document.createElement("i");
+    p.style.left = Math.random() * 100 + "%";
+    p.style.background = colors[i % colors.length];
+    p.style.animationDelay = Math.random() * 0.6 + "s";
+    box.appendChild(p);
+  }
+  document.body.appendChild(box);
+  setTimeout(() => box.remove(), 3200);
+}
+$("btnGuide").onclick = guideOpen;
+$("guideClose").onclick = guideClose;
 
 // ---- misc ----
 $("vol").oninput = () => { if (master) master.gain.value = +$("vol").value; };
