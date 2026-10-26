@@ -1,0 +1,35 @@
+TapTune + Book Piano License
+
+Copyright (c) 2026 @yem.cube (https://www.instagram.com/yem.cube/)
+
+This covers everything in this repository (the TapTune web app and the Book
+Piano firmware in firmware/), except the third-party parts listed at the end.
+
+1. Personal use is free. You may use, copy, change and tweak this software
+   for your own personal, non-commercial use. No need to ask.
+
+2. Sharing publicly needs visible credit. If you share it, or anything made
+   from it, publicly (for example: posting the code or a modified version,
+   hosting it, publishing builds, or posting videos, reels or articles that
+   show it), you must credit @yem.cube visibly:
+     - in code or a website: in the README / on the page itself, e.g.
+       "Based on TapTune by @yem.cube (instagram.com/yem.cube)";
+     - in a video, reel or post: in the caption or on screen, e.g.
+       "Original project by @yem.cube".
+   The credit must be easy to see, not hidden in a file nobody opens.
+   Keep this license with any copy of the code you share.
+
+3. Commercial use (selling it, selling things built with it, or using it in
+   a paid product or service) needs written permission from @yem.cube.
+   Ask on Instagram: https://www.instagram.com/yem.cube/
+
+4. No warranty. This software is provided "as is", without any warranty.
+   The author is not liable for any damage or loss from using it, including
+   to your boards, books or devices.
+
+Third-party parts keep their own licenses:
+- Piano samples: Salamander Grand Piano by Alexander Holm, CC BY 3.0
+  (https://creativecommons.org/licenses/by/3.0/), via Tone.js audio. Credit
+  them too when you share something that plays these sounds.
+- The firmware builds on the Arduino core for ESP32 by Espressif (LGPL 2.1 /
+  Apache 2.0 parts); prebuilt .bin files include that code under those terms.

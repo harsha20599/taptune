@@ -1,8 +1,11 @@
 # TapTune
 
 A low-latency web piano for the **Book Piano**: a row of ordinary-looking books
-with hidden touch sensors, read by ESP32-S3 boards that show up as a USB MIDI
-device called "Book Piano".
+with hidden touch sensors, read by ESP32 boards that show up as a Bluetooth /
+USB MIDI device called "Book Piano". Firmware, wiring and prebuilt files:
+[firmware/](firmware/).
+
+By [@yem.cube](https://www.instagram.com/yem.cube/).
 
 **Open it:** https://harsha20599.github.io/taptune/
 
@@ -32,3 +35,10 @@ offline. On Android you can "Install app" from Chrome's menu.
 Piano samples: **Salamander Grand Piano** by Alexander Holm, licensed
 [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/), via
 [Tone.js audio](https://github.com/Tonejs/audio).
+
+## License
+
+Free for personal use and tweaking. **Sharing it publicly** (code, builds,
+hosted copies, videos or posts that show it) **needs a visible credit to
+[@yem.cube](https://www.instagram.com/yem.cube/)**. Commercial use needs
+permission. Full terms: [LICENSE](LICENSE).

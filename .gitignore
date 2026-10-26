@@ -1,0 +1,2 @@
+# your own wireless-update password (copy ota_secret.example.h)
+ota_secret.h

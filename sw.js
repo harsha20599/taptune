@@ -1,6 +1,6 @@
 ﻿// TapTune offline support: after the first visit the page and piano samples
 // load from the phone's cache, so it works with no internet at the shoot.
-const CACHE = "taptune-v12";
+const CACHE = "taptune-v13";
 const NAMES = ["A0"];
 for (let o = 1; o <= 7; o++) NAMES.push(`C${o}`, `Ds${o}`, `Fs${o}`, `A${o}`);
 NAMES.push("C8");
