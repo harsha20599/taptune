@@ -1,0 +1,10 @@
+{
+  "name": "Book Piano – main board",
+  "version": "3.0",
+  "new_install_prompt_erase": true,
+  "builds": [
+    { "chipFamily": "ESP32-S3", "parts": [{ "path": "book-piano-parent-esp32s3-4mb.bin", "offset": 0 }] },
+    { "chipFamily": "ESP32-S2", "parts": [{ "path": "book-piano-parent-esp32s2.bin", "offset": 0 }] },
+    { "chipFamily": "ESP32", "parts": [{ "path": "book-piano-parent-esp32.bin", "offset": 0 }] }
+  ]
+}

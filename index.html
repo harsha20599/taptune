@@ -234,6 +234,8 @@
   </section>
 
   <footer>
+    TapTune + Book Piano by <a href="https://www.instagram.com/yem.cube/" target="_blank" rel="noopener">@yem.cube</a> ·
+    free for personal use; credit @yem.cube when you share it (<a href="https://github.com/harsha20599/taptune/blob/main/LICENSE" target="_blank" rel="noopener">license</a>).<br>
     Piano: Salamander Grand Piano by Alexander Holm, licensed CC BY 3.0 (samples via Tone.js). Credit this in posts that use it.
   </footer>
 </main>
@@ -526,8 +528,10 @@ addEventListener("keydown", e => { const m = KEYMAP[e.key.toLowerCase()]; if (m 
 addEventListener("keyup", e => { const m = KEYMAP[e.key.toLowerCase()]; if (m) noteOff(m); });
 
 // ---- setup: books, notes & sensitivity ----
-// The main board keeps the setup. A SENSOR is a board + pin (0–13 main GPIO1–14,
-// 14–27 second GPIO1–14); a BOOK is a shelf position pointing at one sensor,
+// The main board keeps the setup. A SENSOR is a board + slot (0–13 main,
+// 14–27 second); slot i is the board's i-th touch pin, whose GPIO number the
+// board reports (firmware 3+; ESP32-S2/S3 = GPIO i+1, classic ESP32 has 9).
+// A BOOK is a shelf position pointing at one sensor,
 // with a note. Each sensor has a touch threshold in bp (0.01 % of its resting
 // level). Talks SysEx F0 7D 42 … (see the board's config.ino).
 let sysexOk = false;
@@ -539,7 +543,18 @@ let step = 1, keepTimer = null;
 let wiz = null;          // step 2 state
 let found = {};          // book index → { sensor, taps: [peak bp], cross: { sensor: peak bp } }
 let restState = "";      // step 1: "", "measuring", "done"
-const sensorName = s => s === NO_SENSOR ? "—" : (s < PINS ? "Main" : "Second") + " GPIO" + (s % PINS + 1);
+let childGpio = null;    // second board's GPIO numbers, remembered while it's offline
+// GPIO number of a sensor: 0 = this board has no such pin, null = not known yet
+const gpioOf = s => {
+  if (!info || !info.gpio) return s % PINS + 1;  // firmware before 3.0: always S3, GPIO1–14
+  return s < PINS ? info.gpio[s] : childGpio ? childGpio[s - PINS] : null;
+};
+const pinExists = s => gpioOf(s) !== 0;
+const sensorName = s => {
+  if (s === NO_SENSOR) return "—";
+  const g = gpioOf(s), board = s < PINS ? "Main" : "Second";
+  return g ? `${board} GPIO${g}` : `${board} pin ${s % PINS + 1}`;
+};
 const pct = bp => (bp / 100).toFixed(bp < 1000 ? 1 : 0) + "%";
 const clone = c => JSON.parse(JSON.stringify(c));
 const median = a => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : 0; };
@@ -602,6 +617,11 @@ function onSysex(d) {
   } else if (cmd === 0x25) {
     info = { fw: `${d[4]}.${d[5]}`, childOnline: !!d[6], inSync: !!d[7], ch: d[8], pins: d[9],
              bleSlotMs: d.length > 12 ? get14(d, 10) * 1.25 : null };
+    if (d.length >= 43) {  // firmware 3+: chips and real GPIO numbers (0 = no such pin)
+      info.chip = d[12]; info.childChip = d[13];
+      info.gpio = Array.from(d.slice(14, 14 + PINS));
+      if (info.childOnline) childGpio = Array.from(d.slice(14 + PINS, 14 + 2 * PINS));
+    }
     if (infoAskedAt) { linkRtt.push(performance.now() - infoAskedAt); if (linkRtt.length > 20) linkRtt.shift(); infoAskedAt = 0; }
     renderTiming();
     renderStatus();
@@ -736,6 +756,7 @@ function calSample(t, v) {  // one reading of the pin being calibrated (200/s ma
 function pinOptions(sel) {
   let o = `<option value="">Tap the book, or choose its pin…</option>`;
   for (let s = 0; s < NSENS; s++) {
+    if (!pinExists(s) && s !== sel) continue;
     const other = Object.entries(found).find(([k, f]) => f.sensor === s && +k !== wiz.k);
     o += `<option value="${s}"${s === sel ? " selected" : ""}>${sensorName(s)}${other ? ` (now book ${+other[0] + 1})` : ""}${tele[s] && !tele[s].online ? " · not listening" : ""}</option>`;
   }
@@ -963,8 +984,9 @@ function applySuggested() {
 function pinGrid() {
   const used = new Set(draft.bookSensor.slice(0, draft.numBooks));
   const row = (label, base) => `<div class="pinrow"><span>${label}</span>${Array.from({ length: PINS }, (_, i) => {
-    const s = base + i, t = tele[s];
-    return `<button class="pinbtn${used.has(s) ? " on" : ""}${t && t.touched ? " hit" : ""}${t && !t.online && !used.has(s) ? " off" : ""}" id="pin${s}" data-s="${s}" title="${sensorName(s)}">${i + 1}</button>`;
+    const s = base + i, t = tele[s], g = gpioOf(s);
+    if (g === 0) return "";
+    return `<button class="pinbtn${used.has(s) ? " on" : ""}${t && t.touched ? " hit" : ""}${t && !t.online && !used.has(s) ? " off" : ""}" id="pin${s}" data-s="${s}" title="${sensorName(s)}">${g || i + 1}</button>`;
   }).join("")}</div>`;
   return `<div id="suPins">${row("Main", 0)}${row("Second", PINS)}</div>`;
 }
@@ -1131,7 +1153,7 @@ function renderReview() {
   $("suSuggest").onclick = () => { applySuggested(); renderSetup(); };
   $("suRevert").onclick = () => { draft = clone(boardCfg); renderSetup(); };
   $("suDefaults").onclick = () => {
-    if (confirm("Reset the board to factory defaults? (24 books on GPIO1–12 of each board, chromatic from C4, 3 % thresholds)")) {
+    if (confirm("Reset the board to factory defaults? (12 books on each board, chromatic from C4, default thresholds)")) {
       found = {}; wiz = null; draft.saving = true; sendSysex([0x13]);
     }
   };
@@ -1179,6 +1201,7 @@ function dbgRender() {
   for (let s = 0; s < NSENS; s++) {
     const k = bookOf(s);
     if (!all && k == null) continue;
+    if (k == null && !pinExists(s)) continue;
     rows.push(`<tr id="dg${s}"><td>${sensorName(s)}</td><td>${k == null ? "–" : `${k + 1} · ${noteName(boardCfg.bookNote[k] + boardCfg.transpose)}`}</td>
       <td id="dgr${s}"></td><td id="dgp${s}"></td><td id="dgn${s}"></td><td id="dgt${s}"></td>
       <td><div class="bar" id="dgb${s}"><i></i><b></b></div></td><td id="dgs${s}"></td></tr>`);
